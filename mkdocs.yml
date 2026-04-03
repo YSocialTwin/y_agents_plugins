@@ -1,0 +1,9 @@
+site_name: y_agents_plugins
+site_description: Documentation for modular YSocial/YWeb plugin clients
+repo_name: y_agents_plugins
+theme:
+  name: mkdocs
+nav:
+  - Home: index.md
+  - Agent Types: agent-types.md
+  - Client Instantiation: client-instantiation.md
