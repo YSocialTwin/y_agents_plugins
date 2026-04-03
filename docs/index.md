@@ -10,6 +10,15 @@ The client:
 - executes exactly one plugin agent type per client process
 - uses the same `simulation.activity_profiles` model as YClient to decide when an agent is active
 
+## Package layout
+
+- `y_agents_plugins.config`: configuration parsing and validation
+- `y_agents_plugins.core`: shared domain models
+- `y_agents_plugins.db`: SQLAlchemy database access
+- `y_agents_plugins.llm`: LangChain LLM adapter
+- `y_agents_plugins.plugins`: plugin base classes and built-in agent types
+- `y_agents_plugins.runtime`: orchestration components such as loader, loop, scheduler, executor, and app bootstrap
+
 ## Core assumptions
 
 - The experiment is already running and exposes a standard experiment database such as `database_server.db`.

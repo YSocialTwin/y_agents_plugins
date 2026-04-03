@@ -9,15 +9,15 @@ Both must be updated when you add a new deployable plugin agent.
 
 ## 1. Implement the plugin class
 
-Create a new module under `src/y_agents_plugins/agents/` and subclass `BaseAgentPlugin`.
+Create a new module under `src/y_agents_plugins/plugins/` and subclass `BaseAgentPlugin`.
 
 Example:
 
 ```python
 from __future__ import annotations
 
-from y_agents_plugins.agents.base import BaseAgentPlugin
-from y_agents_plugins.models import AgentAction, AgentContext, AgentSpec
+from y_agents_plugins.plugins.base import BaseAgentPlugin
+from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec
 
 
 class GreeterAgent(BaseAgentPlugin):
@@ -46,12 +46,12 @@ Rules:
 
 ## 2. Register the type in the runtime registry
 
-Update `build_default_registry()` in `src/y_agents_plugins/runtime.py` so the client can instantiate the new class.
+Update `build_default_registry()` in `src/y_agents_plugins/runtime/app.py` so the client can instantiate the new class.
 
 Example:
 
 ```python
-from y_agents_plugins.agents.greeter import GreeterAgent
+from y_agents_plugins.plugins.greeter import GreeterAgent
 
 
 def build_default_registry() -> AgentTypeRegistry:

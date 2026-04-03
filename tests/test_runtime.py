@@ -290,3 +290,108 @@ def test_unknown_agent_activity_profile_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Unknown activity_profile"):
         ClientApp(config)
+
+
+def test_client_supports_sqlalchemy_url(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    agents_path = tmp_path / "agents.json"
+    _build_db(db_path)
+    _build_agents_json(agents_path, agent_type="hello_world")
+    config = AppConfig(
+        database=DatabaseConfig(sqlalchemy_url=f"sqlite:///{db_path}", poll_interval_seconds=0.0),
+        client=ClientConfig(
+            client_id="hello-client",
+            agent_type="hello_world",
+            agents_json_path=agents_path,
+            llm_servers=LLMServerConfig(values=_llm_servers()),
+            simulation=SimulationConfig(
+                days=30,
+                slots=24,
+                population_json_path=agents_path,
+                raw=_simulation(tmp_path, agents_path),
+            ),
+            max_ticks=1,
+        ),
+    )
+
+    app = ClientApp(config)
+
+    assert app.database.database_url == f"sqlite:///{db_path}"
+
+
+def test_client_exposes_langchain_llm_configuration(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    agents_path = tmp_path / "agents.json"
+    _build_db(db_path)
+    _build_agents_json(agents_path, agent_type="hello_world")
+    config = AppConfig(
+        database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+        client=ClientConfig(
+            client_id="hello-client",
+            agent_type="hello_world",
+            agents_json_path=agents_path,
+            llm_servers=LLMServerConfig(values=_llm_servers()),
+            simulation=SimulationConfig(
+                days=30,
+                slots=24,
+                population_json_path=agents_path,
+                raw=_simulation(tmp_path, agents_path),
+            ),
+            agents_settings={"llm_agents": ["llama3.2"]},
+            max_ticks=1,
+        ),
+    )
+
+    app = ClientApp(config)
+
+    assert app.llm.is_available is True
+    assert app.llm.config.model == "llama3.2"
+
+
+def test_moderator_client_bootstraps_plugin_tables(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    agents_path = tmp_path / "agents.json"
+    _build_db(db_path)
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, joined_on) VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 1)"
+    )
+    connection.execute("UPDATE post SET tweet = 'this is abuse' WHERE id = 1")
+    connection.commit()
+    connection.close()
+    _build_agents_json(agents_path)
+    config = AppConfig(
+        database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+        client=ClientConfig(
+            client_id="moderator-client",
+            agent_type="moderator",
+            agents_json_path=agents_path,
+            llm_servers=LLMServerConfig(values=_llm_servers()),
+            simulation=SimulationConfig(
+                days=30,
+                slots=24,
+                population_json_path=agents_path,
+                raw=_simulation(tmp_path, agents_path),
+            ),
+            agent_settings={"toxicity_keywords": ["abuse"]},
+            max_ticks=1,
+        ),
+    )
+
+    ClientApp(config).run()
+
+    connection = sqlite3.connect(db_path)
+    strategies = connection.execute(
+        "SELECT strategy_key FROM plugin_moderation_strategies ORDER BY strategy_key"
+    ).fetchall()
+    counts = connection.execute(
+        "SELECT moderated_agent_id, moderation_count FROM plugin_moderation_counts"
+    ).fetchall()
+    actions = connection.execute(
+        "SELECT moderated_post_id, moderation_type, round_id FROM plugin_moderation_actions"
+    ).fetchall()
+    connection.close()
+
+    assert strategies == [("keyword_match",)]
+    assert counts == [(1, 1)]
+    assert actions == [(1, "keyword_match", 1)]

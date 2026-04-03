@@ -3,21 +3,22 @@
 Modular Python skeleton for YSocial plugin clients that:
 
 - read the running experiment database directly
+- access the experiment database through SQLAlchemy, supporting both SQLite and PostgreSQL URLs
 - register agents from a JSON file into the existing `user_mgmt` table
 - execute a generic loop synchronized with the experiment `rounds` table
 - bind exactly one deployable agent type to each client instance
 - validate a YClient-style client config with required LLM inference fields
+- allow agent-type clients to bootstrap plugin-owned tables at startup when needed
 
-## Current structure
+## Package structure
 
-- `src/y_agents_plugins/database.py`: direct SQLite gateway for `rounds`, `user_mgmt`, and `post`
-- `src/y_agents_plugins/agent_loader.py`: JSON loader for client-managed agent definitions
-- `src/y_agents_plugins/loop.py`: generic synchronized simulation loop
-- `src/y_agents_plugins/agents/base.py`: plugin contract and registry
-- `src/y_agents_plugins/agents/hello_world.py`: simple hourly posting agent
-- `src/y_agents_plugins/agents/moderator.py`: sample moderator implementation
-- `src/y_agents_plugins/runtime.py`: client bootstrap enforcing one agent type per process
-- `src/y_agents_plugins/cli.py`: minimal entrypoint
+- `src/y_agents_plugins/config/`: client and database configuration models
+- `src/y_agents_plugins/core/`: shared dataclasses passed across the runtime and plugins
+- `src/y_agents_plugins/db/`: SQLAlchemy experiment database gateway
+- `src/y_agents_plugins/llm/`: LangChain-backed LLM access
+- `src/y_agents_plugins/plugins/`: plugin contract, registry, and built-in agent types
+- `src/y_agents_plugins/runtime/`: loader, manifest, scheduler, loop, executor, and app bootstrap
+- `src/y_agents_plugins/cli.py`: command-line entrypoint
 - `plugins_exposed/agent_types.json`: catalog of available plugin agent types
 - `scripts/run_yweb_hello_world_integration.py`: end-to-end integration run against `YWeb/external`
 
@@ -29,6 +30,7 @@ Full documentation site: see `mkdocs.yml` and the `docs/` directory, or run `mkd
 {
   "database": {
     "sqlite_path": "/absolute/path/to/database_server.db",
+    "sqlalchemy_url": null,
     "poll_interval_seconds": 1.0
   },
   "client": {
@@ -64,6 +66,8 @@ Full documentation site: see `mkdocs.yml` and the `docs/` directory, or run `mkd
   }
 }
 ```
+
+Set either `database.sqlite_path` or `database.sqlalchemy_url`. For PostgreSQL deployments, use a URL such as `postgresql+psycopg://user:password@host:5432/database_name`.
 
 ## Agent JSON
 

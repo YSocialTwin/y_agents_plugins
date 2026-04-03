@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 
 @dataclass(frozen=True)
@@ -31,9 +30,7 @@ class AgentTypeManifest:
             return self.agent_types[agent_type]
         except KeyError as exc:
             known = ", ".join(sorted(self.agent_types)) or "<none>"
-            raise ValueError(
-                f"Unknown agent_type '{agent_type}'. Known types: {known}"
-            ) from exc
+            raise ValueError(f"Unknown agent_type '{agent_type}'. Known types: {known}") from exc
 
 
 def load_agent_type_manifest() -> AgentTypeManifest:
@@ -60,4 +57,4 @@ def load_agent_type_manifest() -> AgentTypeManifest:
 
 
 def _manifest_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "plugins_exposed" / "agent_types.json"
+    return Path(__file__).resolve().parents[3] / "plugins_exposed" / "agent_types.json"

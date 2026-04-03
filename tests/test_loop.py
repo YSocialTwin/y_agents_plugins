@@ -3,9 +3,11 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from y_agents_plugins.models import AgentSpec
-from y_agents_plugins.database import ExperimentDatabase
-from y_agents_plugins.loop import SimulationLoop
+from sqlalchemy import text
+
+from y_agents_plugins.core import AgentSpec
+from y_agents_plugins.db import ExperimentDatabase
+from y_agents_plugins.runtime.loop import SimulationLoop
 
 
 def _build_db(path: Path) -> sqlite3.Connection:
@@ -107,9 +109,9 @@ def test_simulation_loop_passes_previous_round_on_second_tick(tmp_path: Path) ->
             )
         )
         if len(handler_calls) == 1:
-            reader.execute("INSERT INTO rounds (day, hour) VALUES (0, 2)")
+            reader.execute(text("INSERT INTO rounds (day, hour) VALUES (0, 2)"))
             reader.execute(
-                "INSERT INTO post (id, tweet, user_id, round) VALUES (3, 'flag this idiot', 1, 3)"
+                text("INSERT INTO post (id, tweet, user_id, round) VALUES (3, 'flag this idiot', 1, 3)")
             )
             reader.commit()
         return []

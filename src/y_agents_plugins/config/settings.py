@@ -21,8 +21,20 @@ REQUIRED_LLM_SERVER_FIELDS = (
 
 @dataclass(frozen=True)
 class DatabaseConfig:
-    sqlite_path: Path
+    sqlite_path: Path | None = None
+    sqlalchemy_url: str | None = None
     poll_interval_seconds: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.sqlite_path is None and not self.sqlalchemy_url:
+            raise ValueError("database config requires either sqlite_path or sqlalchemy_url")
+
+    @property
+    def url(self) -> str:
+        if self.sqlalchemy_url:
+            return self.sqlalchemy_url
+        assert self.sqlite_path is not None
+        return f"sqlite:///{self.sqlite_path}"
 
 
 @dataclass(frozen=True)
@@ -97,6 +109,18 @@ class ClientConfig:
                 self.simulation.population_json_path,
             )
 
+    @property
+    def primary_llm_model(self) -> str | None:
+        agent_model = self.agent_settings.get("llm_model")
+        if agent_model:
+            return str(agent_model)
+        configured_models = self.agents_settings.get("llm_agents")
+        if isinstance(configured_models, list):
+            for model in configured_models:
+                if model:
+                    return str(model)
+        return None
+
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -111,7 +135,12 @@ class AppConfig:
         simulation = client.get("simulation", {})
         return cls(
             database=DatabaseConfig(
-                sqlite_path=Path(database["sqlite_path"]).expanduser().resolve(),
+                sqlite_path=(
+                    Path(database["sqlite_path"]).expanduser().resolve()
+                    if database.get("sqlite_path") is not None
+                    else None
+                ),
+                sqlalchemy_url=database.get("sqlalchemy_url"),
                 poll_interval_seconds=float(database.get("poll_interval_seconds", 1.0)),
             ),
             client=ClientConfig(

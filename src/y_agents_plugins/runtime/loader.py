@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from y_agents_plugins.models import AgentSpec
+from y_agents_plugins.core import AgentSpec
 
 
 class AgentSpecLoader:

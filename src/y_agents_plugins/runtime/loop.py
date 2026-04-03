@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 import time
 from collections.abc import Callable
 
-from y_agents_plugins.database import ExperimentDatabase
-from y_agents_plugins.models import AgentAction, AgentSpec, AgentContext, SimulationRound
+from sqlalchemy import Connection
+
+from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec, SimulationRound
+from y_agents_plugins.db import ExperimentDatabase
 
 
 class SimulationLoop:
@@ -31,12 +32,12 @@ class SimulationLoop:
 
     def run(
         self,
-        tick_handler: Callable[[AgentContext], list[AgentAction]],
+        tick_handler: Callable[[AgentContext, AgentSpec], list[AgentAction]],
         *,
         managed_agents: tuple[AgentSpec, ...],
-        action_sink: Callable[[sqlite3.Connection, AgentContext, AgentSpec, AgentAction], None] | None = None,
+        action_sink: Callable[[Connection, AgentContext, AgentSpec, AgentAction], None] | None = None,
         max_ticks: int | None = None,
-        connection: sqlite3.Connection | None = None,
+        connection: Connection | None = None,
     ) -> list[AgentAction]:
         own_connection = connection is None
         connection = connection or self.database.connect()

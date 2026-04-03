@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import logging
 
-from y_agents_plugins.agent_loader import AgentSpecLoader
-from y_agents_plugins.agent_types import load_agent_type_manifest
-from y_agents_plugins.activity import ActivityProfileScheduler
-from y_agents_plugins.agents import AgentTypeRegistry, HelloWorldAgent, ModeratorAgent
 from y_agents_plugins.config import AppConfig
-from y_agents_plugins.database import ExperimentDatabase
-from y_agents_plugins.executor import ActionExecutor
-from y_agents_plugins.loop import SimulationLoop
-from y_agents_plugins.models import AgentAction
+from y_agents_plugins.db import ExperimentDatabase
+from y_agents_plugins.llm import LangChainTextGenerator
+from y_agents_plugins.plugins import AgentTypeRegistry, HelloWorldAgent, ModeratorAgent
+from y_agents_plugins.runtime.executor import ActionExecutor
+from y_agents_plugins.runtime.loader import AgentSpecLoader
+from y_agents_plugins.runtime.loop import SimulationLoop
+from y_agents_plugins.runtime.manifest import load_agent_type_manifest
+from y_agents_plugins.runtime.scheduler import ActivityProfileScheduler
+from y_agents_plugins.core import AgentAction
 
 
 class ClientApp:
@@ -28,12 +29,14 @@ class ClientApp:
         self.agent_manifest = load_agent_type_manifest()
         self.registry = registry or build_default_registry()
         self.agent_manifest.require_known_agent_type(config.client.agent_type)
+        self.llm = LangChainTextGenerator.from_client_config(config.client)
         self.agent = self.registry.create(
             config.client.agent_type,
             settings=config.client.agent_settings,
+            llm_client=self.llm,
         )
         self.agent_loader = AgentSpecLoader()
-        self.database = ExperimentDatabase(config.database.sqlite_path)
+        self.database = ExperimentDatabase(config.database.url)
         self.executor = ActionExecutor(self.database)
         self.scheduler = ActivityProfileScheduler(config.client.simulation)
         self.loop = SimulationLoop(
@@ -55,6 +58,7 @@ class ClientApp:
         connection = self.database.connect()
         try:
             current_round = self.database.get_current_round(connection)
+            self.agent.setup_database(self.database, connection)
             self.database.register_agents(
                 connection,
                 self.managed_agents,

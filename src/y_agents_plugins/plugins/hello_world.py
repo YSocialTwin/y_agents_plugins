@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from y_agents_plugins.agents.base import BaseAgentPlugin
-from y_agents_plugins.models import AgentAction, AgentContext, AgentSpec
+from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec
+from y_agents_plugins.plugins.base import BaseAgentPlugin
 
 
 class HelloWorldAgent(BaseAgentPlugin):

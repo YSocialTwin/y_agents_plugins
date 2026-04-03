@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
-from y_agents_plugins.models import AgentAction, AgentContext, AgentSpec
+if TYPE_CHECKING:
+    from sqlalchemy import Connection
+
+    from y_agents_plugins.db import ExperimentDatabase
+
+from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec
 
 
 class BaseAgentPlugin(ABC):
@@ -10,8 +16,16 @@ class BaseAgentPlugin(ABC):
 
     agent_type: str
 
-    def __init__(self, settings: dict | None = None):
+    def __init__(self, settings: dict | None = None, llm_client=None):
         self.settings = dict(settings or {})
+        self.llm = llm_client
+
+    def setup_database(
+        self,
+        database: "ExperimentDatabase",
+        connection: "Connection",
+    ) -> None:
+        """Create or seed plugin-owned schema objects before the loop starts."""
 
     @abstractmethod
     def on_tick(self, context: AgentContext, agent: AgentSpec) -> list[AgentAction]:
@@ -30,13 +44,13 @@ class AgentTypeRegistry:
             raise ValueError("Registered agent class must define a non-empty agent_type")
         self._registry[agent_type] = agent_class
 
-    def create(self, agent_type: str, settings: dict | None = None) -> BaseAgentPlugin:
+    def create(self, agent_type: str, settings: dict | None = None, llm_client=None) -> BaseAgentPlugin:
         try:
             agent_class = self._registry[agent_type]
         except KeyError as exc:
             known = ", ".join(sorted(self._registry)) or "<none>"
             raise ValueError(f"Unknown agent_type '{agent_type}'. Known types: {known}") from exc
-        return agent_class(settings=settings)
+        return agent_class(settings=settings, llm_client=llm_client)
 
     @property
     def supported_types(self) -> tuple[str, ...]:

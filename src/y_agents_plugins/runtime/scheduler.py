@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from y_agents_plugins.config import SimulationConfig
-from y_agents_plugins.models import AgentSpec, SimulationRound
+from y_agents_plugins.core import AgentSpec, SimulationRound
 
 
 class ActivityProfileScheduler:
