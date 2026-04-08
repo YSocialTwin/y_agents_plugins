@@ -57,6 +57,10 @@ class ModeratorAgent(BaseAgentPlugin):
             moderation_counts,
             moderation_strategies,
         )
+        for table in tables:
+            if not database.has_table(connection, table.name):
+                table.create(connection, checkfirst=True)
+        connection.commit()
         database.seed_table_rows(
             connection,
             "plugin_moderation_strategies",
@@ -137,6 +141,7 @@ class ModeratorAgent(BaseAgentPlugin):
             post
             for post in context.recent_posts
             if post.moderated == 0
+            and post.is_moderation_comment == 0
             and (context.current_round.id - post.round_id) <= lookback_rounds
             and (post.reported_count > 0 or float(post.toxicity or 0.0) >= threshold)
         ]

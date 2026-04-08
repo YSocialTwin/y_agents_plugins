@@ -32,6 +32,7 @@ class PostRecord:
     thread_id: int | None = None
     shared_from: int | None = None
     moderated: int = 0
+    is_moderation_comment: int = 0
     toxicity: float | None = None
     reported_count: int = 0
 

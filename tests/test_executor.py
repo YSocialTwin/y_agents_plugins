@@ -32,7 +32,8 @@ def _build_db(path: Path) -> sqlite3.Connection:
             thread_id INTEGER,
             round INTEGER,
             shared_from INTEGER DEFAULT -1,
-            moderated INTEGER DEFAULT 0
+            moderated INTEGER DEFAULT 0,
+            is_moderation_comment INTEGER DEFAULT 0
         );
         CREATE TABLE reported (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,6 +160,12 @@ def test_executor_persists_moderation_action_and_updates_counts(tmp_path: Path) 
     assert database.count_rows(sa_connection, "plugin_moderation_actions") == 1
     assert database.count_rows(sa_connection, "plugin_moderation_counts") == 1
     assert database.count_rows(sa_connection, "sys_messages") == 1
+    moderation_comment = sa_connection.execute(
+        database.table("post").select().where(database.table("post").c.id != 1)
+    ).mappings().first()
+    assert moderation_comment["tweet"] == "Adjust your behavior."
+    assert moderation_comment["comment_to"] == 1
+    assert moderation_comment["is_moderation_comment"] == 1
     sa_connection.close()
     connection.close()
 
@@ -229,8 +236,13 @@ def test_moderator_can_generate_personalized_sys_message_and_persist_it(tmp_path
     moderated = sa_connection.execute(
         database.table("post").select().where(database.table("post").c.id == 1)
     ).mappings().first()
+    moderation_comment = sa_connection.execute(
+        database.table("post").select().where(database.table("post").c.id != 1).order_by(database.table("post").c.id.desc())
+    ).mappings().first()
     assert sys_message["message"] == "Your message violated the moderation policy."
     assert moderated["moderated"] == 1
+    assert moderation_comment["tweet"] == "Your message violated the moderation policy."
+    assert moderation_comment["comment_to"] == 1
     sa_connection.close()
     connection.close()
 

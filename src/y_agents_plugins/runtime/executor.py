@@ -35,6 +35,14 @@ class ActionExecutor:
                 from_round=int(action.payload.get("round_id", context.current_round.id)),
                 duration=int(action.payload["message_duration"]),
             )
+            moderation_comment_id = self.database.create_comment(
+                connection,
+                username=agent.username,
+                text=str(action.payload["system_message_text"]),
+                round_id=int(action.payload.get("round_id", context.current_round.id)),
+                parent_post_id=int(action.payload["post_id"]),
+                is_moderation_comment=True,
+            )
             self.database.mark_post_moderated(
                 connection,
                 post_id=int(action.payload["post_id"]),
@@ -45,5 +53,5 @@ class ActionExecutor:
                 moderated_post_id=int(action.payload["post_id"]),
                 moderation_type=str(action.payload["reason"]),
                 round_id=int(action.payload.get("round_id", context.current_round.id)),
-                generated_comment_id=system_message_id,
+                generated_comment_id=moderation_comment_id,
             )

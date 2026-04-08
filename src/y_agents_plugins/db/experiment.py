@@ -67,6 +67,11 @@ class ExperimentDatabase:
             post.c.thread_id,
             post.c.shared_from,
             (post.c.moderated if "moderated" in post.c else literal(0)).label("moderated"),
+            (
+                post.c.is_moderation_comment
+                if "is_moderation_comment" in post.c
+                else literal(0)
+            ).label("is_moderation_comment"),
             literal(0.0).label("toxicity"),
             literal(0).label("reported_count"),
         ).where(post.c.round <= round_id)
@@ -105,6 +110,11 @@ class ExperimentDatabase:
                 post.c.thread_id,
                 post.c.shared_from,
                 (post.c.moderated if "moderated" in post.c else literal(0)).label("moderated"),
+                (
+                    post.c.is_moderation_comment
+                    if "is_moderation_comment" in post.c
+                    else literal(0)
+                ).label("is_moderation_comment"),
                 func.coalesce(toxicity_subquery.c.toxicity, 0.0).label("toxicity"),
                 literal(0).label("reported_count"),
             )
@@ -129,6 +139,7 @@ class ExperimentDatabase:
                 post.c.thread_id,
                 post.c.shared_from,
                 (post.c.moderated if "moderated" in post.c else literal(0)).label("moderated"),
+                statement.selected_columns.is_moderation_comment,
                 statement.selected_columns.toxicity,
                 func.coalesce(reported_subquery.c.reported_count, 0).label("reported_count"),
             )
@@ -144,6 +155,7 @@ class ExperimentDatabase:
                 thread_id=_nullable_int(row["thread_id"]),
                 shared_from=_nullable_int(row["shared_from"]),
                 moderated=int(row["moderated"] or 0),
+                is_moderation_comment=int(row["is_moderation_comment"] or 0),
                 toxicity=float(row["toxicity"]) if row["toxicity"] is not None else None,
                 reported_count=int(row["reported_count"] or 0),
             )
@@ -263,6 +275,7 @@ class ExperimentDatabase:
         text: str,
         round_id: int,
         parent_post_id: int,
+        is_moderation_comment: bool = False,
     ) -> int:
         post = self.table("post")
         user_id = self.get_user_id(connection, username)
@@ -272,18 +285,17 @@ class ExperimentDatabase:
         if parent is None:
             raise RuntimeError(f"Parent post '{parent_post_id}' not found in post table")
         thread_id = _nullable_int(parent["thread_id"]) or int(parent["id"])
-        result = connection.execute(
-            post.insert()
-            .values(
-                tweet=text,
-                user_id=user_id,
-                comment_to=parent_post_id,
-                thread_id=thread_id,
-                round=round_id,
-                shared_from=-1,
-            )
-            .returning(post.c.id)
-        )
+        values = {
+            "tweet": text,
+            "user_id": user_id,
+            "comment_to": parent_post_id,
+            "thread_id": thread_id,
+            "round": round_id,
+            "shared_from": -1,
+        }
+        if "is_moderation_comment" in post.c:
+            values["is_moderation_comment"] = int(bool(is_moderation_comment))
+        result = connection.execute(post.insert().values(**values).returning(post.c.id))
         comment_id = int(result.scalar_one())
         connection.commit()
         return comment_id

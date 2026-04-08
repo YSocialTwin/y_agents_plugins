@@ -564,16 +564,34 @@ def test_moderator_client_bootstraps_plugin_tables(tmp_path: Path) -> None:
         "SELECT moderated_post_id, moderation_type, round_id, generated_comment_id FROM plugin_moderation_actions"
     ).fetchall()
     sys_messages = connection.execute(
-        "SELECT type, to_uid, from_round, duration FROM sys_messages"
+        "SELECT type, to_uid, message, from_round, duration FROM sys_messages"
     ).fetchall()
     moderated = connection.execute("SELECT moderated FROM post WHERE id = 1").fetchone()
+    moderation_comment = connection.execute(
+        "SELECT tweet, user_id, comment_to, thread_id, round FROM post WHERE id = 2"
+    ).fetchone()
     connection.close()
 
     assert strategies == [("one-fits-all",), ("personalized",)]
     assert counts == [(2, 1)]
-    assert actions == [(1, "one-fits-all", 1, 1)]
-    assert sys_messages == [("moderation", 2, 1, 4)]
+    assert actions == [(1, "one-fits-all", 1, 2)]
+    assert sys_messages == [
+        (
+            "moderation",
+            2,
+            "Your recent post violated the platform moderation policy. Please adjust your behavior.",
+            1,
+            4,
+        )
+    ]
     assert moderated == (1,)
+    assert moderation_comment == (
+        sys_messages[0][2],
+        3,
+        1,
+        1,
+        1,
+    )
 
 
 def test_personalized_moderator_requires_llm_model(tmp_path: Path) -> None:
