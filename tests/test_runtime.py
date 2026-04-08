@@ -14,6 +14,7 @@ from y_agents_plugins.config import (
     SimulationConfig,
 )
 from y_agents_plugins.runtime import ClientApp
+from y_agents_plugins.runtime import manifest as manifest_module
 
 
 def _llm_servers():
@@ -121,7 +122,12 @@ def _build_db(path: Path) -> None:
     connection.close()
 
 
-def _build_agents_json(path: Path, *, agent_type: str = "moderator") -> None:
+def _build_agents_json(
+    path: Path,
+    *,
+    agent_type: str = "moderator",
+    parameters: dict | None = None,
+) -> None:
     path.write_text(
         json.dumps(
             [
@@ -133,7 +139,7 @@ def _build_agents_json(path: Path, *, agent_type: str = "moderator") -> None:
                     "agent_type": agent_type,
                     "activity_profile": "Always On",
                     "daily_budget": 42,
-                    "parameters": {"toxicity_keywords": ["abuse"]},
+                    "parameters": parameters or {"toxicity_keywords": ["abuse"]},
                 }
             ]
         )
@@ -280,6 +286,132 @@ def test_missing_agent_required_fields_are_rejected(tmp_path: Path) -> None:
                 ),
             )
         )
+
+
+def test_client_app_accepts_moderator_settings_from_agent_parameters(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "simulation.db"
+    agents_path = tmp_path / "agents.json"
+    _build_db(db_path)
+    _build_agents_json(
+        agents_path,
+        parameters={
+            "toxicity_threshold": "0.6",
+            "moderation_time_span": "4",
+            "moderation_action_type": "one-fits-all",
+            "candidate_window_rounds": "3",
+        },
+    )
+    config = AppConfig(
+        database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+        client=ClientConfig(
+            client_id="moderator-client",
+            agent_type="moderator",
+            agents_json_path=agents_path,
+            llm_servers=LLMServerConfig(values=_llm_servers()),
+            simulation=SimulationConfig(
+                days=30,
+                slots=24,
+                population_json_path=agents_path,
+                raw=_simulation(tmp_path, agents_path),
+            ),
+            agent_settings={},
+            max_ticks=1,
+        ),
+    )
+
+    app = ClientApp(config)
+    app.run()
+
+    connection = sqlite3.connect(db_path)
+    row = connection.execute(
+        "SELECT strategy_key FROM plugin_moderation_strategies ORDER BY strategy_key"
+    ).fetchall()
+    connection.close()
+
+    assert row == [
+        ("one-fits-all",),
+        ("personalized",),
+    ]
+
+
+def test_second_moderator_client_reuses_existing_plugin_tables(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    agents_a = tmp_path / "agents_a.json"
+    agents_b = tmp_path / "agents_b.json"
+    _build_db(db_path)
+    moderator_parameters = {
+        "toxicity_threshold": "0.6",
+        "moderation_time_span": "4",
+        "moderation_action_type": "one-fits-all",
+        "candidate_window_rounds": "3",
+    }
+    _build_agents_json(agents_a, parameters=moderator_parameters)
+    _build_agents_json(agents_b, parameters=moderator_parameters)
+
+    def _config(client_id: str, agents_path: Path) -> AppConfig:
+        return AppConfig(
+            database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+            client=ClientConfig(
+                client_id=client_id,
+                agent_type="moderator",
+                agents_json_path=agents_path,
+                llm_servers=LLMServerConfig(values=_llm_servers()),
+                simulation=SimulationConfig(
+                    days=30,
+                    slots=24,
+                    population_json_path=agents_path,
+                    raw=_simulation(tmp_path, agents_path),
+                ),
+                agent_settings={},
+                max_ticks=1,
+            ),
+        )
+
+    ClientApp(_config("moderator-a", agents_a)).run()
+    ClientApp(_config("moderator-b", agents_b)).run()
+
+    connection = sqlite3.connect(db_path)
+    counts = connection.execute(
+        "SELECT COUNT(*) FROM plugin_moderation_strategies"
+    ).fetchone()[0]
+    connection.close()
+
+    assert counts == 2
+
+
+def test_manifest_loader_prefers_meta_registry(tmp_path: Path, monkeypatch) -> None:
+    plugin_root = tmp_path / "plugin"
+    runtime_dir = plugin_root / "src" / "y_agents_plugins" / "runtime"
+    runtime_dir.mkdir(parents=True)
+    registry_path = plugin_root / "meta" / "registry.json"
+    registry_path.parent.mkdir(parents=True)
+    registry_path.write_text(
+        json.dumps(
+            {
+                "agent_types": [
+                    {
+                        "agent_type": "moderator",
+                        "display_name": "Moderator Agent",
+                        "description": "desc",
+                        "parameters": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        manifest_module,
+        "__file__",
+        str(runtime_dir / "manifest.py"),
+        raising=False,
+    )
+
+    manifest = manifest_module.load_agent_type_manifest()
+
+    assert manifest.require_known_agent_type("moderator").display_name == "Moderator Agent"
 
 
 def test_missing_client_llm_fields_are_rejected() -> None:

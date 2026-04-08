@@ -233,3 +233,132 @@ def test_moderator_can_generate_personalized_sys_message_and_persist_it(tmp_path
     assert moderated["moderated"] == 1
     sa_connection.close()
     connection.close()
+
+
+def test_personalized_message_is_sanitized_before_persisting(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age) VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 'sports', 30)"
+    )
+    connection.execute(
+        "INSERT INTO post (id, tweet, user_id, round, moderated) VALUES (1, 'this is abuse', 2, 1, 0)"
+    )
+    connection.execute(
+        "INSERT INTO reported (type, to_uid, to_post, from_uid, tid) VALUES ('post', 2, 1, 1, 1)"
+    )
+    connection.execute(
+        "INSERT INTO post_toxicity (post_id, toxicity) VALUES (1, 0.8)"
+    )
+    connection.commit()
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+
+    class StubLLM:
+        is_available = True
+
+        def invoke_text(self, *, system_prompt: str, user_prompt: str) -> str:
+            return (
+                "**To target_1@example.org**\n\n"
+                "Please be aware that your comment was reviewed in the last **24-round moderation duration**, "
+                "but it failed to meet our standards.\n\n"
+                "Do not use abusive language again.\n\n"
+                "Sincerely,\n"
+                "Moderator"
+            )
+
+    moderator = ModeratorAgent(
+        settings={
+            "toxicity_threshold": 0.5,
+            "moderation_time_span": 3,
+            "moderation_action_type": "personalized",
+            "candidate_window_rounds": 2,
+        },
+        llm_client=StubLLM(),
+    )
+    moderator.setup_database(database, sa_connection)
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=5),
+        managed_agents=(),
+    )
+    agent = AgentSpec(
+        name="Moderator One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="moderator",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+
+    actions = moderator.on_tick(context, agent)
+
+    assert actions[1].payload["system_message_text"] == "Do not use abusive language again."
+    sa_connection.close()
+    connection.close()
+
+
+def test_moderator_uses_highest_available_post_toxicity_dimension(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.executescript(
+        """
+        DROP TABLE post_toxicity;
+        CREATE TABLE post_toxicity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL,
+            toxicity REAL DEFAULT 0 NOT NULL,
+            severe_toxicity REAL DEFAULT 0,
+            identity_attack REAL DEFAULT 0,
+            insult REAL DEFAULT 0,
+            profanity REAL DEFAULT 0,
+            threat REAL DEFAULT 0,
+            sexually_explicit REAL DEFAULT 0,
+            flirtation REAL DEFAULT 0
+        );
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age)
+        VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 'sports', 30);
+        INSERT INTO post (id, tweet, user_id, round, moderated) VALUES (1, 'this is abuse', 2, 1, 0);
+        INSERT INTO post_toxicity (post_id, toxicity, insult) VALUES (1, 0.2, 0.91);
+        """
+    )
+    connection.commit()
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    moderator = ModeratorAgent(
+        settings={
+            "toxicity_threshold": 0.5,
+            "moderation_time_span": 3,
+            "moderation_action_type": "one-fits-all",
+            "candidate_window_rounds": 2,
+        }
+    )
+    moderator.setup_database(database, sa_connection)
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=5),
+        managed_agents=(),
+    )
+    agent = AgentSpec(
+        name="Moderator One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="moderator",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+
+    actions = moderator.on_tick(context, agent)
+
+    assert [action.action_type for action in actions] == ["READ", "APPLY_MODERATION"]
+    assert actions[1].payload["post_id"] == 1
+    sa_connection.close()
+    connection.close()

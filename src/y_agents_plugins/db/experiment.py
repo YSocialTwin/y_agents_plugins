@@ -73,10 +73,25 @@ class ExperimentDatabase:
 
         if self.has_table(connection, "post_toxicity"):
             post_toxicity = self.table("post_toxicity")
+            toxicity_columns = [
+                post_toxicity.c[name]
+                for name in (
+                    "toxicity",
+                    "severe_toxicity",
+                    "identity_attack",
+                    "insult",
+                    "profanity",
+                    "threat",
+                    "sexually_explicit",
+                    "flirtation",
+                )
+                if name in post_toxicity.c
+            ]
+            per_row_toxicity = self._max_score_expr(*toxicity_columns)
             toxicity_subquery = (
                 select(
                     post_toxicity.c.post_id.label("post_id"),
-                    func.max(post_toxicity.c.toxicity).label("toxicity"),
+                    func.max(per_row_toxicity).label("toxicity"),
                 )
                 .group_by(post_toxicity.c.post_id)
                 .subquery()
@@ -449,6 +464,16 @@ class ExperimentDatabase:
     def _validate_connectivity(self) -> None:
         with self.engine.connect() as connection:
             connection.execute(text("SELECT 1"))
+
+    def _max_score_expr(self, *columns):
+        if not columns:
+            return literal(0.0)
+        normalized = [func.coalesce(column, 0.0) for column in columns]
+        if len(normalized) == 1:
+            return normalized[0]
+        if self.engine.dialect.name == "sqlite":
+            return func.max(*normalized)
+        return func.greatest(*normalized)
 
     @staticmethod
     def _normalize_database_url(database_url: str | Path) -> str:
