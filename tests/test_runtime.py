@@ -43,6 +43,17 @@ def _simulation(tmp_path: Path, agents_path: Path):
     }
 
 
+def _moderator_settings(**overrides):
+    settings = {
+        "toxicity_threshold": 0.6,
+        "moderation_time_span": 4,
+        "moderation_action_type": "one-fits-all",
+        "candidate_window_rounds": 3,
+    }
+    settings.update(overrides)
+    return settings
+
+
 def _build_db(path: Path) -> None:
     connection = sqlite3.connect(path)
     connection.executescript(
@@ -76,7 +87,29 @@ def _build_db(path: Path) -> None:
             comment_to INTEGER DEFAULT -1,
             thread_id INTEGER,
             round INTEGER,
-            shared_from INTEGER DEFAULT -1
+            shared_from INTEGER DEFAULT -1,
+            moderated INTEGER DEFAULT 0
+        );
+        CREATE TABLE reported (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            to_uid INTEGER,
+            to_post INTEGER,
+            from_uid INTEGER NOT NULL,
+            tid INTEGER NOT NULL
+        );
+        CREATE TABLE post_toxicity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL,
+            toxicity REAL DEFAULT 0 NOT NULL
+        );
+        CREATE TABLE sys_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            to_uid INTEGER,
+            message TEXT NOT NULL,
+            from_round INTEGER,
+            duration INTEGER
         );
         INSERT INTO rounds (day, hour) VALUES (0, 0);
         INSERT INTO user_mgmt (id, username, email, password, user_type, owner, joined_on)
@@ -125,7 +158,7 @@ def test_client_app_binds_exactly_one_agent_type(tmp_path: Path) -> None:
                 population_json_path=agents_path,
                 raw=_simulation(tmp_path, agents_path),
             ),
-            agent_settings={"toxicity_keywords": ["abuse"]},
+            agent_settings=_moderator_settings(),
             max_ticks=1,
         ),
     )
@@ -179,6 +212,7 @@ def test_client_registers_agents_in_user_mgmt(tmp_path: Path) -> None:
                 population_json_path=agents_path,
                 raw=_simulation(tmp_path, agents_path),
             ),
+            agent_settings=_moderator_settings(),
             max_ticks=1,
         ),
     )
@@ -356,7 +390,14 @@ def test_moderator_client_bootstraps_plugin_tables(tmp_path: Path) -> None:
     connection.execute(
         "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, joined_on) VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 1)"
     )
-    connection.execute("UPDATE post SET tweet = 'this is abuse' WHERE id = 1")
+    connection.execute("UPDATE post SET tweet = 'this is abusive content' WHERE id = 1")
+    connection.execute("UPDATE post SET user_id = 2 WHERE id = 1")
+    connection.execute(
+        "INSERT INTO reported (type, to_uid, to_post, from_uid, tid) VALUES ('post', 2, 1, 1, 1)"
+    )
+    connection.execute(
+        "INSERT INTO post_toxicity (post_id, toxicity) VALUES (1, 0.8)"
+    )
     connection.commit()
     connection.close()
     _build_agents_json(agents_path)
@@ -373,7 +414,7 @@ def test_moderator_client_bootstraps_plugin_tables(tmp_path: Path) -> None:
                 population_json_path=agents_path,
                 raw=_simulation(tmp_path, agents_path),
             ),
-            agent_settings={"toxicity_keywords": ["abuse"]},
+            agent_settings=_moderator_settings(),
             max_ticks=1,
         ),
     )
@@ -388,10 +429,44 @@ def test_moderator_client_bootstraps_plugin_tables(tmp_path: Path) -> None:
         "SELECT moderated_agent_id, moderation_count FROM plugin_moderation_counts"
     ).fetchall()
     actions = connection.execute(
-        "SELECT moderated_post_id, moderation_type, round_id FROM plugin_moderation_actions"
+        "SELECT moderated_post_id, moderation_type, round_id, generated_comment_id FROM plugin_moderation_actions"
     ).fetchall()
+    sys_messages = connection.execute(
+        "SELECT type, to_uid, from_round, duration FROM sys_messages"
+    ).fetchall()
+    moderated = connection.execute("SELECT moderated FROM post WHERE id = 1").fetchone()
     connection.close()
 
-    assert strategies == [("keyword_match",)]
-    assert counts == [(1, 1)]
-    assert actions == [(1, "keyword_match", 1)]
+    assert strategies == [("one-fits-all",), ("personalized",)]
+    assert counts == [(2, 1)]
+    assert actions == [(1, "one-fits-all", 1, 1)]
+    assert sys_messages == [("moderation", 2, 1, 4)]
+    assert moderated == (1,)
+
+
+def test_personalized_moderator_requires_llm_model(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    agents_path = tmp_path / "agents.json"
+    _build_db(db_path)
+    _build_agents_json(agents_path)
+
+    config = AppConfig(
+        database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+        client=ClientConfig(
+            client_id="moderator-client",
+            agent_type="moderator",
+            agents_json_path=agents_path,
+            llm_servers=LLMServerConfig(values=_llm_servers()),
+            simulation=SimulationConfig(
+                days=30,
+                slots=24,
+                population_json_path=agents_path,
+                raw=_simulation(tmp_path, agents_path),
+            ),
+            agent_settings=_moderator_settings(moderation_action_type="personalized"),
+            max_ticks=1,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="requires a configured LangChain LLM model"):
+        ClientApp(config).run()

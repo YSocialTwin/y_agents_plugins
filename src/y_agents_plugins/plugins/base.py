@@ -19,6 +19,7 @@ class BaseAgentPlugin(ABC):
     def __init__(self, settings: dict | None = None, llm_client=None):
         self.settings = dict(settings or {})
         self.llm = llm_client
+        self.database = None
 
     def setup_database(
         self,
@@ -26,6 +27,7 @@ class BaseAgentPlugin(ABC):
         connection: "Connection",
     ) -> None:
         """Create or seed plugin-owned schema objects before the loop starts."""
+        self.database = database
 
     @abstractmethod
     def on_tick(self, context: AgentContext, agent: AgentSpec) -> list[AgentAction]:

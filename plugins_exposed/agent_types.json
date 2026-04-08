@@ -28,7 +28,7 @@
     {
       "agent_type": "moderator",
       "display_name": "Moderator Agent",
-      "description": "Scans recent posts during active slots and can emit moderation actions according to its plugin settings.",
+      "description": "Scans recent unmoderated content during active slots, prioritizes reported or highly toxic posts, writes moderation notices into sys_messages, and marks moderated posts in the experiment database.",
       "parameters": [
         {
           "name": "name",
@@ -49,10 +49,28 @@
           "description": "Daily budget field persisted in the existing experiment population record."
         },
         {
-          "name": "toxicity_keywords",
-          "type": "array[string]",
+          "name": "toxicity_threshold",
+          "type": "float",
+          "required": true,
+          "description": "Minimum toxicity score in post_toxicity.toxicity that makes an unmoderated post eligible for moderation. Must be in [0, 1]."
+        },
+        {
+          "name": "moderation_time_span",
+          "type": "integer",
+          "required": true,
+          "description": "Number of simulation rounds for which the system moderation notice stays visible in sys_messages."
+        },
+        {
+          "name": "moderation_action_type",
+          "type": "enum[one-fits-all, personalized]",
+          "required": true,
+          "description": "Moderation strategy. 'one-fits-all' writes a standard notice, while 'personalized' requires a configured LangChain LLM model and generates a user-tailored notice."
+        },
+        {
+          "name": "candidate_window_rounds",
+          "type": "integer",
           "required": false,
-          "description": "Optional plugin-level keyword list used by the sample moderator implementation."
+          "description": "Optional lookback window, in simulation rounds, used to search for recent unmoderated posts. Defaults to 1."
         }
       ]
     }

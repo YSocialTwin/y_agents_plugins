@@ -68,6 +68,7 @@ class SimulationLoop:
                             limit=self.recent_posts_limit,
                         ),
                         managed_agents=managed_agents,
+                        connection=connection,
                     )
 
                     self.logger.info(

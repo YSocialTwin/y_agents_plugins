@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import MetaData, Table, create_engine, func, inspect, select, text
+from sqlalchemy import MetaData, Table, create_engine, func, inspect, literal, select, text
 from sqlalchemy.engine import Connection, Engine, RowMapping
 from sqlalchemy.pool import NullPool
 
@@ -58,8 +58,30 @@ class ExperimentDatabase:
         limit: int,
     ) -> tuple[PostRecord, ...]:
         post = self.table("post")
-        rows = connection.execute(
-            select(
+        statement = select(
+            post.c.id,
+            post.c.user_id,
+            post.c.tweet,
+            post.c.round,
+            post.c.comment_to,
+            post.c.thread_id,
+            post.c.shared_from,
+            (post.c.moderated if "moderated" in post.c else literal(0)).label("moderated"),
+            literal(0.0).label("toxicity"),
+            literal(0).label("reported_count"),
+        ).where(post.c.round <= round_id)
+
+        if self.has_table(connection, "post_toxicity"):
+            post_toxicity = self.table("post_toxicity")
+            toxicity_subquery = (
+                select(
+                    post_toxicity.c.post_id.label("post_id"),
+                    func.max(post_toxicity.c.toxicity).label("toxicity"),
+                )
+                .group_by(post_toxicity.c.post_id)
+                .subquery()
+            )
+            statement = statement.outerjoin(toxicity_subquery, toxicity_subquery.c.post_id == post.c.id).with_only_columns(
                 post.c.id,
                 post.c.user_id,
                 post.c.tweet,
@@ -67,11 +89,36 @@ class ExperimentDatabase:
                 post.c.comment_to,
                 post.c.thread_id,
                 post.c.shared_from,
+                (post.c.moderated if "moderated" in post.c else literal(0)).label("moderated"),
+                func.coalesce(toxicity_subquery.c.toxicity, 0.0).label("toxicity"),
+                literal(0).label("reported_count"),
             )
-            .where(post.c.round <= round_id)
-            .order_by(post.c.id.desc())
-            .limit(limit)
-        ).mappings().all()
+
+        if self.has_table(connection, "reported"):
+            reported = self.table("reported")
+            reported_subquery = (
+                select(
+                    reported.c.to_post.label("post_id"),
+                    func.count(reported.c.id).label("reported_count"),
+                )
+                .where(reported.c.to_post.is_not(None))
+                .group_by(reported.c.to_post)
+                .subquery()
+            )
+            statement = statement.outerjoin(reported_subquery, reported_subquery.c.post_id == post.c.id).with_only_columns(
+                post.c.id,
+                post.c.user_id,
+                post.c.tweet,
+                post.c.round,
+                post.c.comment_to,
+                post.c.thread_id,
+                post.c.shared_from,
+                (post.c.moderated if "moderated" in post.c else literal(0)).label("moderated"),
+                statement.selected_columns.toxicity,
+                func.coalesce(reported_subquery.c.reported_count, 0).label("reported_count"),
+            )
+
+        rows = connection.execute(statement.order_by(post.c.id.desc()).limit(limit)).mappings().all()
         return tuple(
             PostRecord(
                 id=int(row["id"]),
@@ -81,26 +128,27 @@ class ExperimentDatabase:
                 comment_to=_nullable_int(row["comment_to"]),
                 thread_id=_nullable_int(row["thread_id"]),
                 shared_from=_nullable_int(row["shared_from"]),
+                moderated=int(row["moderated"] or 0),
+                toxicity=float(row["toxicity"]) if row["toxicity"] is not None else None,
+                reported_count=int(row["reported_count"] or 0),
             )
             for row in rows
         )
 
     def get_users(self, connection: Connection) -> tuple[UserRecord, ...]:
         user_mgmt = self.table("user_mgmt")
-        rows = connection.execute(
-            select(
-                user_mgmt.c.id,
-                user_mgmt.c.username,
-                user_mgmt.c.user_type,
-                user_mgmt.c.owner,
-            ).order_by(user_mgmt.c.id.asc())
-        ).mappings().all()
+        rows = connection.execute(select(user_mgmt).order_by(user_mgmt.c.id.asc())).mappings().all()
         return tuple(
             UserRecord(
                 id=int(row["id"]),
                 username=str(row["username"]),
                 user_type=row["user_type"],
                 owner=row["owner"],
+                profile={
+                    key: value
+                    for key, value in row.items()
+                    if key not in {"id", "username", "user_type", "owner", "password"}
+                },
             )
             for row in rows
         )
@@ -260,6 +308,9 @@ class ExperimentDatabase:
             return
         self.metadata.create_all(self.engine, tables=list(tables), checkfirst=True)
 
+    def has_table(self, connection: Connection, table_name: str) -> bool:
+        return inspect(connection).has_table(table_name)
+
     def insert_moderation_event(
         self,
         connection: Connection,
@@ -292,6 +343,47 @@ class ExperimentDatabase:
         )
         connection.commit()
         return action_id
+
+    def create_system_message(
+        self,
+        connection: Connection,
+        *,
+        message_type: str,
+        to_user_id: int,
+        message: str,
+        from_round: int,
+        duration: int,
+    ) -> int:
+        sys_messages = self.table("sys_messages")
+        values = {
+            "type": message_type,
+            "to_uid": to_user_id,
+            "message": message,
+            "from_round": from_round,
+        }
+        if "duration" in sys_messages.c:
+            values["duration"] = duration
+        elif "to_round" in sys_messages.c:
+            values["to_round"] = from_round + duration
+        else:
+            raise RuntimeError("sys_messages table exposes neither duration nor to_round")
+        result = connection.execute(
+            sys_messages.insert()
+            .values(**values)
+            .returning(sys_messages.c.id)
+        )
+        message_id = int(result.scalar_one())
+        connection.commit()
+        return message_id
+
+    def mark_post_moderated(self, connection: Connection, *, post_id: int) -> None:
+        post = self.table("post")
+        if "moderated" not in post.c:
+            raise RuntimeError("post table does not expose a moderated column")
+        connection.execute(
+            post.update().where(post.c.id == post_id).values(moderated=1)
+        )
+        connection.commit()
 
     def increment_moderation_count(
         self,

@@ -19,6 +19,7 @@ class UserRecord:
     username: str
     user_type: str | None = None
     owner: str | None = None
+    profile: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,9 @@ class PostRecord:
     comment_to: int | None = None
     thread_id: int | None = None
     shared_from: int | None = None
+    moderated: int = 0
+    toxicity: float | None = None
+    reported_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -51,6 +55,7 @@ class AgentContext:
     users: tuple[UserRecord, ...]
     recent_posts: tuple[PostRecord, ...]
     managed_agents: tuple["AgentSpec", ...]
+    connection: Any | None = None
 
 
 @dataclass(frozen=True)

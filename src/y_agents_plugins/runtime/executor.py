@@ -26,21 +26,24 @@ class ActionExecutor:
                 text=text,
                 round_id=context.current_round.id,
             )
-        elif action.action_type == "FLAG_POST":
-            generated_comment_id = None
-            if action.payload.get("generated_comment_text"):
-                generated_comment_id = self.database.create_comment(
-                    connection,
-                    username=agent.username,
-                    text=str(action.payload["generated_comment_text"]),
-                    round_id=int(action.payload.get("round_id", context.current_round.id)),
-                    parent_post_id=int(action.payload["post_id"]),
-                )
+        elif action.action_type == "APPLY_MODERATION":
+            system_message_id = self.database.create_system_message(
+                connection,
+                message_type=str(action.payload["message_type"]),
+                to_user_id=int(action.payload["target_user_id"]),
+                message=str(action.payload["system_message_text"]),
+                from_round=int(action.payload.get("round_id", context.current_round.id)),
+                duration=int(action.payload["message_duration"]),
+            )
+            self.database.mark_post_moderated(
+                connection,
+                post_id=int(action.payload["post_id"]),
+            )
             self.database.insert_moderation_event(
                 connection,
                 moderator_username=agent.username,
                 moderated_post_id=int(action.payload["post_id"]),
                 moderation_type=str(action.payload["reason"]),
                 round_id=int(action.payload.get("round_id", context.current_round.id)),
-                generated_comment_id=generated_comment_id,
+                generated_comment_id=system_message_id,
             )
