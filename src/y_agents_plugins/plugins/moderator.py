@@ -57,9 +57,6 @@ class ModeratorAgent(BaseAgentPlugin):
             moderation_counts,
             moderation_strategies,
         )
-        for table in tables:
-            if not database.has_table(connection, table.name):
-                table.create(connection, checkfirst=True)
         database.seed_table_rows(
             connection,
             "plugin_moderation_strategies",
@@ -194,7 +191,7 @@ class ModeratorAgent(BaseAgentPlugin):
         if settings["moderation_action_type"] == "one-fits-all":
             return (
                 "Your recent post violated the platform moderation policy. "
-                f"Please adjust your behavior for the next {int(settings['moderation_time_span'])} rounds."
+                 f"Please adjust your behavior."
             )
         if self.llm is None or not self.llm.is_available:
             raise ValueError("moderation_action_type 'personalized' requires a configured LangChain LLM model")
