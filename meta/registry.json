@@ -3,6 +3,7 @@
     {
       "agent_type": "hello_world",
       "display_name": "Hello World Agent",
+      "llm_required": false,
       "description": "Posts the literal text HELLO WORLD once on each simulation round where the agent's activity profile is active.",
       "parameters": [
         {
@@ -28,6 +29,7 @@
     {
       "agent_type": "moderator",
       "display_name": "Moderator Agent",
+      "llm_required": true,
       "description": "Scans recent unmoderated content during active slots, prioritizes reported or highly toxic posts, writes moderation notices into sys_messages, and marks moderated posts in the experiment database.",
       "parameters": [
         {
