@@ -173,7 +173,7 @@ class ModeratorAgent(BaseAgentPlugin):
         if self.settings["moderation_action_type"] == "one-fits-all":
             return (
                 "Your recent post violated the platform moderation policy. "
-                f"Please adjust your behavior for the next {int(self.settings['moderation_time_span'])} rounds."
+                f"Please adjust your behavior."
             )
         if self.llm is None or not self.llm.is_available:
             raise ValueError("moderation_action_type 'personalized' requires a configured LangChain LLM model")
