@@ -73,6 +73,11 @@ class PropagandaAgent(BaseAgentPlugin):
             return [self._read_action(context, agent)]
 
         propaganda_uid = self.database.get_user_id(context.connection, agent.username)
+        self._ensure_fixed_agent_opinions(
+            context=context,
+            propaganda_uid=propaganda_uid,
+            campaigns=campaigns,
+        )
         active_threads = self.database.get_latest_propaganda_thread_states(
             context.connection,
             propaganda_agent_uid=propaganda_uid,
@@ -423,6 +428,26 @@ class PropagandaAgent(BaseAgentPlugin):
             day=int(context.current_round.day),
         )
         return max(0, daily_budget - used_today)
+
+    def _ensure_fixed_agent_opinions(
+        self,
+        *,
+        context: AgentContext,
+        propaganda_uid: int,
+        campaigns: list[dict[str, Any]],
+    ) -> None:
+        for campaign in campaigns:
+            runtime_topic_id = campaign.get("runtime_topic_id")
+            target_opinion = campaign.get("target_opinion")
+            if runtime_topic_id in (None, "") or target_opinion in (None, ""):
+                continue
+            self.database.set_fixed_agent_opinion(
+                context.connection,
+                user_id=int(propaganda_uid),
+                topic_id=int(runtime_topic_id),
+                opinion=float(target_opinion),
+                round_id=int(context.current_round.id),
+            )
 
     def _campaigns(self, settings: dict[str, Any]) -> list[dict[str, Any]]:
         raw_campaigns = settings.get("propaganda_campaigns") or []

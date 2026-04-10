@@ -423,6 +423,39 @@ class ExperimentDatabase:
         ).first()
         return None if row is None else float(row[0])
 
+    def set_fixed_agent_opinion(
+        self,
+        connection: Connection,
+        *,
+        user_id: int,
+        topic_id: int,
+        opinion: float,
+        round_id: int,
+    ) -> bool:
+        if not self.has_table(connection, "agent_opinion"):
+            return False
+        current = self.get_latest_agent_opinion(
+            connection,
+            user_id=int(user_id),
+            topic_id=int(topic_id),
+            current_round_id=None,
+        )
+        if current is not None and abs(float(current) - float(opinion)) <= 1e-9:
+            return False
+        agent_opinion = self.table("agent_opinion")
+        connection.execute(
+            agent_opinion.insert().values(
+                agent_id=int(user_id),
+                tid=int(round_id),
+                topic_id=int(topic_id),
+                id_interacted_with=-1,
+                id_post=-1,
+                opinion=float(opinion),
+            )
+        )
+        connection.commit()
+        return True
+
     def get_latest_opinions_for_topic(
         self,
         connection: Connection,

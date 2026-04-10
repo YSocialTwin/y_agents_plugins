@@ -496,6 +496,12 @@ def test_propaganda_agent_starts_thread_and_records_activity(tmp_path: Path) -> 
     actions = propaganda.on_tick(context, agent)
 
     assert [action.action_type for action in actions] == ["READ", "CREATE_POST"]
+    assert database.get_latest_agent_opinion(
+        sa_connection,
+        user_id=1,
+        topic_id=1,
+        current_round_id=1,
+    ) == 0.9
 
     executor = ActionExecutor(database)
     executor.execute(sa_connection, context=context, agent=agent, action=actions[1])
@@ -513,6 +519,81 @@ def test_propaganda_agent_starts_thread_and_records_activity(tmp_path: Path) -> 
     assert post is not None
     assert post[1].startswith("@target_1 ")
     assert activity == (2, 1, 1, 1, 0.1, 1)
+    sa_connection.close()
+    connection.close()
+
+
+def test_propaganda_agent_reasserts_fixed_opinion_if_it_drifted(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.executescript(
+        """
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age)
+        VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 'climate', 30);
+        INSERT INTO agent_opinion (agent_id, tid, topic_id, id_interacted_with, id_post, opinion)
+        VALUES (1, 1, 1, -1, -1, 0.25);
+        INSERT INTO agent_opinion (agent_id, tid, topic_id, id_interacted_with, id_post, opinion)
+        VALUES (2, 1, 1, 2, 0, 0.10);
+        """
+    )
+    connection.commit()
+
+    class StubLLM:
+        is_available = True
+
+        def invoke_text(self, *, system_prompt: str, user_prompt: str) -> str:
+            return "@target_1 climate action helps long-term stability."
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    propaganda = PropagandaAgent(
+        settings={
+            "propaganda_campaigns": [
+                {
+                    "topic_id": 1,
+                    "topic_name": "Climate",
+                    "target_opinion": 0.9,
+                    "target_agent_opinion_group": "Opposed",
+                    "target_agent_opinion_group_bounds": {
+                        "name": "Opposed",
+                        "lower_bound": 0.0,
+                        "upper_bound": 0.2,
+                        "value": 0.1,
+                    },
+                }
+            ],
+        },
+        llm_client=StubLLM(),
+    )
+    propaganda.setup_database(database, sa_connection)
+    agent = AgentSpec(
+        name="Propaganda One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="propaganda",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=2, day=0, slot=1),
+        previous_round=SimulationRound(id=1, day=0, slot=0),
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=2, limit=5),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+
+    propaganda.on_tick(context, agent)
+
+    latest = sa_connection.execute(
+        text(
+            "SELECT tid, opinion FROM agent_opinion WHERE agent_id = 1 AND topic_id = 1 "
+            "ORDER BY id DESC LIMIT 1"
+        )
+    ).fetchone()
+    assert latest == (2, 0.9)
     sa_connection.close()
     connection.close()
 
