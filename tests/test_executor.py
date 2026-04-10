@@ -3,6 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from sqlalchemy import text
+
 from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec, SimulationRound
 from y_agents_plugins.db import ExperimentDatabase
 from y_agents_plugins.plugins.moderator import ModeratorAgent
@@ -22,7 +24,8 @@ def _build_db(path: Path) -> sqlite3.Connection:
             user_type TEXT,
             owner TEXT,
             interests TEXT,
-            age INTEGER
+            age INTEGER,
+            left_on INTEGER
         );
         CREATE TABLE post (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -372,5 +375,482 @@ def test_moderator_uses_highest_available_post_toxicity_dimension(tmp_path: Path
 
     assert [action.action_type for action in actions] == ["READ", "APPLY_MODERATION"]
     assert actions[1].payload["post_id"] == 1
+    sa_connection.close()
+    connection.close()
+
+
+def test_moderator_respects_daily_budget_within_same_day(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.executescript(
+        """
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner)
+        VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment');
+        INSERT INTO post (id, tweet, user_id, round, moderated) VALUES (1, 'this is abuse', 2, 1, 0);
+        INSERT INTO post_toxicity (post_id, toxicity) VALUES (1, 0.9);
+        """
+    )
+    connection.commit()
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    moderator = ModeratorAgent(
+        settings={
+            "toxicity_threshold": 0.5,
+            "moderation_time_span": 3,
+            "moderation_action_type": "one-fits-all",
+            "candidate_window_rounds": 2,
+        }
+    )
+    moderator.setup_database(database, sa_connection)
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=5),
+        managed_agents=(),
+        connection=sa_connection,
+    )
+    agent = AgentSpec(
+        name="Moderator One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="moderator",
+        activity_profile="Always On",
+        daily_budget=1,
+    )
+
+    first_actions = moderator.on_tick(context, agent)
+    assert [action.action_type for action in first_actions] == ["READ", "APPLY_MODERATION"]
+
+    ActionExecutor(database).execute(
+        sa_connection,
+        context=context,
+        agent=agent,
+        action=first_actions[1],
+    )
+
+    second_actions = moderator.on_tick(context, agent)
+    assert [action.action_type for action in second_actions] == ["READ"]
+    assert database.count_moderations_for_agent_day(
+        sa_connection,
+        moderator_username="hello_1",
+        day=0,
+    ) == 1
+    sa_connection.close()
+    connection.close()
+
+
+def test_moderator_daily_budget_resets_on_new_day(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.executescript(
+        """
+        INSERT INTO rounds (id, day, hour) VALUES (2, 1, 0);
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner)
+        VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment');
+        INSERT INTO post (id, tweet, user_id, round, moderated) VALUES (1, 'this is abuse', 2, 1, 0);
+        INSERT INTO post (id, tweet, user_id, round, moderated) VALUES (2, 'still abusive today', 2, 2, 0);
+        INSERT INTO post_toxicity (post_id, toxicity) VALUES (1, 0.9);
+        INSERT INTO post_toxicity (post_id, toxicity) VALUES (2, 0.92);
+        """
+    )
+    connection.commit()
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    moderator = ModeratorAgent(
+        settings={
+            "toxicity_threshold": 0.5,
+            "moderation_time_span": 3,
+            "moderation_action_type": "one-fits-all",
+            "candidate_window_rounds": 5,
+        }
+    )
+    moderator.setup_database(database, sa_connection)
+    agent = AgentSpec(
+        name="Moderator One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="moderator",
+        activity_profile="Always On",
+        daily_budget=1,
+    )
+
+    day_zero_context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=5),
+        managed_agents=(),
+        connection=sa_connection,
+    )
+    first_actions = moderator.on_tick(day_zero_context, agent)
+    ActionExecutor(database).execute(
+        sa_connection,
+        context=day_zero_context,
+        agent=agent,
+        action=first_actions[1],
+    )
+
+    day_one_context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=2, day=1, slot=0),
+        previous_round=day_zero_context.current_round,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=2, limit=5),
+        managed_agents=(),
+        connection=sa_connection,
+    )
+    second_day_actions = moderator.on_tick(day_one_context, agent)
+
+    assert [action.action_type for action in second_day_actions] == ["READ", "APPLY_MODERATION"]
+    assert second_day_actions[1].payload["post_id"] == 2
+    assert database.count_moderations_for_agent_day(
+        sa_connection,
+        moderator_username="hello_1",
+        day=0,
+    ) == 1
+    assert database.count_moderations_for_agent_day(
+        sa_connection,
+        moderator_username="hello_1",
+        day=1,
+    ) == 0
+    sa_connection.close()
+    connection.close()
+
+
+def test_moderator_creates_shadow_ban_table_and_applies_ban_at_threshold(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.executescript(
+        """
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner)
+        VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment');
+        INSERT INTO rounds (id, day, hour) VALUES (2, 0, 1);
+        INSERT INTO post (id, tweet, user_id, round, moderated) VALUES (1, 'first abusive post', 2, 1, 1);
+        INSERT INTO post (id, tweet, user_id, round, moderated) VALUES (2, 'second abusive post', 2, 2, 0);
+        INSERT INTO post_toxicity (post_id, toxicity) VALUES (1, 0.91);
+        INSERT INTO post_toxicity (post_id, toxicity) VALUES (2, 0.93);
+        """
+    )
+    connection.commit()
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    moderator = ModeratorAgent(
+        settings={
+            "toxicity_threshold": 0.5,
+            "moderation_time_span": 3,
+            "moderation_action_type": "one-fits-all",
+            "candidate_window_rounds": 5,
+            "shadow_ban_enabled": "enabled",
+            "shadow_ban_infraction_window_rounds": 24,
+            "shadow_ban_n_infraction": 2,
+            "shadow_ban_duration_rounds": 5,
+        }
+    )
+    moderator.setup_database(database, sa_connection)
+    assert database.has_table(sa_connection, "shadow_ban")
+
+    agent = AgentSpec(
+        name="Moderator One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="moderator",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=2, day=0, slot=1),
+        previous_round=SimulationRound(id=1, day=0, slot=0),
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=2, limit=5),
+        managed_agents=(),
+        connection=sa_connection,
+    )
+
+    database.insert_moderation_event(
+        sa_connection,
+        moderator_username="hello_1",
+        moderated_post_id=1,
+        moderation_type="one-fits-all",
+        round_id=1,
+    )
+
+    actions = moderator.on_tick(context, agent)
+    moderation_action = actions[1]
+    assert moderation_action.payload["infraction_count"] == 2
+    assert moderation_action.payload["shadow_ban_applied"] is True
+    assert "temporary shadow ban for 5 rounds" in moderation_action.payload["system_message_text"]
+
+    ActionExecutor(database).execute(
+        sa_connection,
+        context=context,
+        agent=agent,
+        action=moderation_action,
+    )
+
+    bans = sa_connection.execute(
+        database.table("shadow_ban").select().where(database.table("shadow_ban").c.uid == 2)
+    ).mappings().all()
+    assert len(bans) == 1
+    assert bans[0]["start_tid"] == 2
+    assert bans[0]["duration"] == 5
+    sa_connection.close()
+    connection.close()
+
+
+def test_moderator_mentions_infraction_risk_before_shadow_ban_threshold(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.executescript(
+        """
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner)
+        VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment');
+        INSERT INTO post (id, tweet, user_id, round, moderated) VALUES (1, 'abusive post', 2, 1, 0);
+        INSERT INTO post_toxicity (post_id, toxicity) VALUES (1, 0.88);
+        """
+    )
+    connection.commit()
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    moderator = ModeratorAgent(
+        settings={
+            "toxicity_threshold": 0.5,
+            "moderation_time_span": 3,
+            "moderation_action_type": "one-fits-all",
+            "candidate_window_rounds": 5,
+            "shadow_ban_enabled": "enabled",
+            "shadow_ban_infraction_window_rounds": 24,
+            "shadow_ban_n_infraction": 3,
+            "shadow_ban_duration_rounds": 6,
+        }
+    )
+    moderator.setup_database(database, sa_connection)
+    agent = AgentSpec(
+        name="Moderator One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="moderator",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=5),
+        managed_agents=(),
+        connection=sa_connection,
+    )
+
+    actions = moderator.on_tick(context, agent)
+    moderation_action = actions[1]
+    assert moderation_action.payload["shadow_ban_applied"] is False
+    assert moderation_action.payload["infraction_count"] == 1
+    assert "reach 3 infractions" in moderation_action.payload["system_message_text"]
+    assert "2 infractions remain" in moderation_action.payload["system_message_text"]
+    sa_connection.close()
+    connection.close()
+
+
+def test_moderator_creates_banned_table_only_when_ban_enabled(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    _build_db(db_path).close()
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+
+    moderator_disabled = ModeratorAgent(
+        settings={
+            "toxicity_threshold": 0.5,
+            "moderation_time_span": 3,
+            "moderation_action_type": "one-fits-all",
+        }
+    )
+    moderator_disabled.setup_database(database, sa_connection)
+    assert database.has_table(sa_connection, "banned") is False
+
+    moderator_enabled = ModeratorAgent(
+        settings={
+            "toxicity_threshold": 0.5,
+            "moderation_time_span": 3,
+            "moderation_action_type": "one-fits-all",
+            "ban_enabled": "enabled",
+            "ban_infraction_window_rounds": 24,
+            "ban_n_infraction": 2,
+        }
+    )
+    moderator_enabled.setup_database(database, sa_connection)
+    assert database.has_table(sa_connection, "banned") is True
+    sa_connection.close()
+
+
+def test_moderator_warns_at_ban_threshold_before_applying_ban(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.executescript(
+        """
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner)
+        VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment');
+        INSERT INTO rounds (id, day, hour) VALUES (2, 0, 1);
+        INSERT INTO post (id, tweet, user_id, round, moderated) VALUES (1, 'old abuse', 2, 1, 1);
+        INSERT INTO post (id, tweet, user_id, round, moderated) VALUES (2, 'new abuse', 2, 2, 0);
+        INSERT INTO post_toxicity (post_id, toxicity) VALUES (1, 0.91);
+        INSERT INTO post_toxicity (post_id, toxicity) VALUES (2, 0.95);
+        """
+    )
+    connection.commit()
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    moderator = ModeratorAgent(
+        settings={
+            "toxicity_threshold": 0.5,
+            "moderation_time_span": 3,
+            "moderation_action_type": "one-fits-all",
+            "candidate_window_rounds": 5,
+            "ban_enabled": "enabled",
+            "ban_infraction_window_rounds": 24,
+            "ban_n_infraction": 2,
+        }
+    )
+    moderator.setup_database(database, sa_connection)
+    database.insert_moderation_event(
+        sa_connection,
+        moderator_username="hello_1",
+        moderated_post_id=1,
+        moderation_type="one-fits-all",
+        round_id=1,
+    )
+    agent = AgentSpec(
+        name="Moderator One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="moderator",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=2, day=0, slot=1),
+        previous_round=SimulationRound(id=1, day=0, slot=0),
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=2, limit=5),
+        managed_agents=(),
+        connection=sa_connection,
+    )
+
+    actions = moderator.on_tick(context, agent)
+    moderation_action = actions[1]
+    assert moderation_action.payload["ban_warning"] is True
+    assert moderation_action.payload["ban_applied"] is False
+    assert "next infraction within the configured window will result in a permanent ban" in moderation_action.payload["system_message_text"]
+
+    ActionExecutor(database).execute(
+        sa_connection,
+        context=context,
+        agent=agent,
+        action=moderation_action,
+    )
+    left_on = sa_connection.execute(
+        text("SELECT left_on FROM user_mgmt WHERE id = 2")
+    ).first()
+    banned_rows = sa_connection.execute(text("SELECT uid, tid FROM banned")).fetchall()
+    assert left_on == (None,)
+    assert banned_rows == []
+    sa_connection.close()
+    connection.close()
+
+
+def test_moderator_permanently_bans_user_after_threshold_plus_one(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.executescript(
+        """
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner)
+        VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment');
+        INSERT INTO rounds (id, day, hour) VALUES (2, 0, 1);
+        INSERT INTO rounds (id, day, hour) VALUES (3, 0, 2);
+        INSERT INTO post (id, tweet, user_id, round, moderated) VALUES (1, 'old abuse 1', 2, 1, 1);
+        INSERT INTO post (id, tweet, user_id, round, moderated) VALUES (2, 'old abuse 2', 2, 2, 1);
+        INSERT INTO post (id, tweet, user_id, round, moderated) VALUES (3, 'ban me', 2, 3, 0);
+        INSERT INTO post_toxicity (post_id, toxicity) VALUES (1, 0.91);
+        INSERT INTO post_toxicity (post_id, toxicity) VALUES (2, 0.92);
+        INSERT INTO post_toxicity (post_id, toxicity) VALUES (3, 0.99);
+        """
+    )
+    connection.commit()
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    moderator = ModeratorAgent(
+        settings={
+            "toxicity_threshold": 0.5,
+            "moderation_time_span": 3,
+            "moderation_action_type": "one-fits-all",
+            "candidate_window_rounds": 5,
+            "ban_enabled": "enabled",
+            "ban_infraction_window_rounds": 24,
+            "ban_n_infraction": 2,
+        }
+    )
+    moderator.setup_database(database, sa_connection)
+    database.insert_moderation_event(
+        sa_connection,
+        moderator_username="hello_1",
+        moderated_post_id=1,
+        moderation_type="one-fits-all",
+        round_id=1,
+    )
+    database.insert_moderation_event(
+        sa_connection,
+        moderator_username="hello_1",
+        moderated_post_id=2,
+        moderation_type="one-fits-all",
+        round_id=2,
+    )
+    agent = AgentSpec(
+        name="Moderator One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="moderator",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=3, day=0, slot=2),
+        previous_round=SimulationRound(id=2, day=0, slot=1),
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=3, limit=5),
+        managed_agents=(),
+        connection=sa_connection,
+    )
+
+    actions = moderator.on_tick(context, agent)
+    moderation_action = actions[1]
+    assert moderation_action.payload["ban_applied"] is True
+    assert "now permanently banned from the platform" in moderation_action.payload["system_message_text"]
+
+    ActionExecutor(database).execute(
+        sa_connection,
+        context=context,
+        agent=agent,
+        action=moderation_action,
+    )
+
+    left_on = sa_connection.execute(
+        text("SELECT left_on FROM user_mgmt WHERE id = 2")
+    ).first()
+    banned_rows = sa_connection.execute(text("SELECT uid, tid FROM banned")).fetchall()
+    assert left_on == (3,)
+    assert banned_rows == [(2, 3)]
+    assert database.user_is_banned(sa_connection, user_id=2) is True
     sa_connection.close()
     connection.close()

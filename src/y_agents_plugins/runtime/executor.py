@@ -27,19 +27,21 @@ class ActionExecutor:
                 round_id=context.current_round.id,
             )
         elif action.action_type == "APPLY_MODERATION":
+            round_id = int(action.payload.get("round_id", context.current_round.id))
+            target_user_id = int(action.payload["target_user_id"])
             system_message_id = self.database.create_system_message(
                 connection,
                 message_type=str(action.payload["message_type"]),
-                to_user_id=int(action.payload["target_user_id"]),
+                to_user_id=target_user_id,
                 message=str(action.payload["system_message_text"]),
-                from_round=int(action.payload.get("round_id", context.current_round.id)),
+                from_round=round_id,
                 duration=int(action.payload["message_duration"]),
             )
             moderation_comment_id = self.database.create_comment(
                 connection,
                 username=agent.username,
                 text=str(action.payload["system_message_text"]),
-                round_id=int(action.payload.get("round_id", context.current_round.id)),
+                round_id=round_id,
                 parent_post_id=int(action.payload["post_id"]),
                 is_moderation_comment=True,
             )
@@ -52,6 +54,26 @@ class ActionExecutor:
                 moderator_username=agent.username,
                 moderated_post_id=int(action.payload["post_id"]),
                 moderation_type=str(action.payload["reason"]),
-                round_id=int(action.payload.get("round_id", context.current_round.id)),
+                round_id=round_id,
                 generated_comment_id=moderation_comment_id,
             )
+            if bool(action.payload.get("shadow_ban_applied")) and not self.database.user_has_active_shadow_ban(
+                connection,
+                user_id=target_user_id,
+                current_round_id=round_id,
+            ):
+                self.database.create_shadow_ban(
+                    connection,
+                    user_id=target_user_id,
+                    start_tid=round_id,
+                    duration=int(action.payload.get("shadow_ban_duration", 0) or 0),
+                )
+            if bool(action.payload.get("ban_applied")) and not self.database.user_is_banned(
+                connection,
+                user_id=target_user_id,
+            ):
+                self.database.create_ban(
+                    connection,
+                    user_id=target_user_id,
+                    round_id=round_id,
+                )

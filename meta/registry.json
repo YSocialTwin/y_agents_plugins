@@ -5,23 +5,34 @@
       "display_name": "Hello World Agent",
       "llm_required": false,
       "description": "Posts the literal text HELLO WORLD once on each simulation round where the agent's activity profile is active.",
+      "parameter_sections": [
+        {
+          "key": "core",
+          "label": "Core Configuration",
+          "description": "Base agent identity and scheduling settings."
+        }
+      ],
       "parameters": [
         {
           "name": "name",
           "type": "string",
           "required": true,
+          "section": "core",
           "description": "Human-readable agent name stored in the YSocial experiment population."
         },
         {
           "name": "activity_profile",
           "type": "string",
           "required": true,
+          "section": "core",
           "description": "Name of a simulation.activity_profiles entry from the client configuration."
         },
         {
           "name": "daily_budget",
           "type": "number",
           "required": true,
+          "default": 24,
+          "section": "core",
           "description": "Daily budget field persisted in the existing experiment population record."
         }
       ]
@@ -31,48 +42,158 @@
       "display_name": "Moderator Agent",
       "llm_required": true,
       "description": "Scans recent unmoderated content during active slots, prioritizes reported or highly toxic posts, writes moderation notices into sys_messages, and marks moderated posts in the experiment database.",
+      "parameter_sections": [
+        {
+          "key": "core",
+          "label": "Core Configuration",
+          "description": "Base agent identity and scheduling settings."
+        },
+        {
+          "key": "moderation",
+          "label": "Moderation Policy",
+          "description": "Primary moderation strategy and moderation window parameters."
+        },
+        {
+          "key": "shadow_ban",
+          "label": "Shadow Ban",
+          "description": "Optional escalation settings activated after repeated infractions."
+        },
+        {
+          "key": "ban",
+          "label": "Permanent Ban",
+          "description": "Optional permanent-ban escalation applied after repeated infractions continue beyond the warning threshold."
+        }
+      ],
       "parameters": [
         {
           "name": "name",
           "type": "string",
           "required": true,
+          "section": "core",
           "description": "Human-readable agent name stored in the YSocial experiment population."
         },
         {
           "name": "activity_profile",
           "type": "string",
           "required": true,
+          "section": "core",
           "description": "Name of a simulation.activity_profiles entry from the client configuration."
         },
         {
           "name": "daily_budget",
           "type": "number",
           "required": true,
+          "default": 24,
+          "section": "core",
           "description": "Daily budget field persisted in the existing experiment population record."
         },
         {
           "name": "toxicity_threshold",
           "type": "float",
           "required": true,
+          "default": 0.8,
+          "section": "moderation",
           "description": "Minimum toxicity score in post_toxicity.toxicity that makes an unmoderated post eligible for moderation. Must be in [0, 1]."
         },
         {
           "name": "moderation_time_span",
           "type": "integer",
           "required": true,
+          "default": 24,
+          "section": "moderation",
           "description": "Number of simulation rounds for which the system moderation notice stays visible in sys_messages."
         },
         {
           "name": "moderation_action_type",
           "type": "enum[one-fits-all, personalized]",
           "required": true,
+          "default": "one-fits-all",
+          "section": "moderation",
           "description": "Moderation strategy. 'one-fits-all' writes a standard notice, while 'personalized' requires a configured LangChain LLM model and generates a user-tailored notice."
         },
         {
           "name": "candidate_window_rounds",
           "type": "integer",
           "required": false,
+          "default": 1,
+          "section": "moderation",
           "description": "Optional lookback window, in simulation rounds, used to search for recent unmoderated posts. Defaults to 1."
+        },
+        {
+          "name": "shadow_ban_enabled",
+          "type": "enum[disabled, enabled]",
+          "required": false,
+          "default": "disabled",
+          "section": "shadow_ban",
+          "description": "Optional secondary moderation action. When enabled, users exceeding the configured infraction threshold within the configured window are temporarily shadow-banned."
+        },
+        {
+          "name": "shadow_ban_infraction_window_rounds",
+          "type": "integer",
+          "required": false,
+          "default": 24,
+          "section": "shadow_ban",
+          "visible_if": {
+            "field": "shadow_ban_enabled",
+            "equals": "enabled"
+          },
+          "description": "Lookback window, in simulation rounds, used to count prior moderation infractions for shadow-ban escalation."
+        },
+        {
+          "name": "shadow_ban_n_infraction",
+          "type": "integer",
+          "required": false,
+          "default": 3,
+          "section": "shadow_ban",
+          "visible_if": {
+            "field": "shadow_ban_enabled",
+            "equals": "enabled"
+          },
+          "description": "Number of moderation infractions within the configured window that triggers a shadow ban."
+        },
+        {
+          "name": "shadow_ban_duration_rounds",
+          "type": "integer",
+          "required": false,
+          "default": 24,
+          "section": "shadow_ban",
+          "visible_if": {
+            "field": "shadow_ban_enabled",
+            "equals": "enabled"
+          },
+          "description": "Number of simulation rounds for which the offending user remains shadow-banned once the threshold is reached."
+        },
+        {
+          "name": "ban_enabled",
+          "type": "enum[disabled, enabled]",
+          "required": false,
+          "default": "disabled",
+          "section": "ban",
+          "description": "Optional secondary moderation action. When enabled, users are permanently banned after exceeding the configured infraction threshold within the configured window."
+        },
+        {
+          "name": "ban_infraction_window_rounds",
+          "type": "integer",
+          "required": false,
+          "default": 24,
+          "section": "ban",
+          "visible_if": {
+            "field": "ban_enabled",
+            "equals": "enabled"
+          },
+          "description": "Lookback window, in simulation rounds, used to count prior moderation infractions for permanent-ban escalation."
+        },
+        {
+          "name": "ban_n_infraction",
+          "type": "integer",
+          "required": false,
+          "default": 3,
+          "section": "ban",
+          "visible_if": {
+            "field": "ban_enabled",
+            "equals": "enabled"
+          },
+          "description": "Number of infractions within the configured window that triggers a warning. The next infraction within the same window permanently bans the user."
         }
       ]
     }

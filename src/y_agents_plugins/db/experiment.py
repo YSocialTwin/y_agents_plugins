@@ -438,6 +438,135 @@ class ExperimentDatabase:
                 .values(moderation_count=int(existing[1]) + 1)
             )
 
+    def count_moderations_for_agent_day(
+        self,
+        connection: Connection,
+        *,
+        moderator_username: str,
+        day: int,
+    ) -> int:
+        actions = self.table("plugin_moderation_actions")
+        rounds = self.table("rounds")
+        moderator_id = self.get_user_id(connection, moderator_username)
+        row = connection.execute(
+            select(func.count())
+            .select_from(actions.join(rounds, rounds.c.id == actions.c.round_id))
+            .where(actions.c.moderator_agent_id == moderator_id)
+            .where(rounds.c.day == day)
+        ).first()
+        return int(row[0] or 0)
+
+    def count_recent_infractions_for_user(
+        self,
+        connection: Connection,
+        *,
+        user_id: int,
+        current_round_id: int,
+        window_rounds: int,
+    ) -> int:
+        actions = self.table("plugin_moderation_actions")
+        lower_bound = max(0, int(current_round_id) - max(0, int(window_rounds)))
+        row = connection.execute(
+            select(func.count())
+            .select_from(actions)
+            .where(actions.c.moderated_agent_id == int(user_id))
+            .where(actions.c.round_id >= lower_bound)
+            .where(actions.c.round_id <= int(current_round_id))
+        ).first()
+        return int(row[0] or 0)
+
+    def create_shadow_ban(
+        self,
+        connection: Connection,
+        *,
+        user_id: int,
+        start_tid: int,
+        duration: int,
+    ) -> None:
+        if not self.has_table(connection, "shadow_ban"):
+            return
+        shadow_ban = self.table("shadow_ban")
+        existing = connection.execute(
+            select(shadow_ban.c.uid)
+            .where(shadow_ban.c.uid == int(user_id))
+            .where(shadow_ban.c.start_tid == int(start_tid))
+            .limit(1)
+        ).first()
+        if existing is None:
+            connection.execute(
+                shadow_ban.insert().values(
+                    uid=int(user_id),
+                    start_tid=int(start_tid),
+                    duration=int(duration),
+                )
+            )
+            connection.commit()
+
+    def create_ban(
+        self,
+        connection: Connection,
+        *,
+        user_id: int,
+        round_id: int,
+    ) -> None:
+        user_mgmt = self.table("user_mgmt")
+        if "left_on" in user_mgmt.c:
+            connection.execute(
+                user_mgmt.update().where(user_mgmt.c.id == int(user_id)).values(left_on=int(round_id))
+            )
+        if self.has_table(connection, "banned"):
+            banned = self.table("banned")
+            existing = connection.execute(
+                select(banned.c.uid).where(banned.c.uid == int(user_id)).limit(1)
+            ).first()
+            if existing is None:
+                connection.execute(
+                    banned.insert().values(
+                        uid=int(user_id),
+                        tid=int(round_id),
+                    )
+                )
+        connection.commit()
+
+    def user_is_banned(
+        self,
+        connection: Connection,
+        *,
+        user_id: int,
+    ) -> bool:
+        user_mgmt = self.table("user_mgmt")
+        if "left_on" in user_mgmt.c:
+            row = connection.execute(
+                select(user_mgmt.c.left_on).where(user_mgmt.c.id == int(user_id)).limit(1)
+            ).first()
+            return row is not None and row[0] is not None
+        if self.has_table(connection, "banned"):
+            banned = self.table("banned")
+            row = connection.execute(
+                select(banned.c.uid).where(banned.c.uid == int(user_id)).limit(1)
+            ).first()
+            return row is not None
+        return False
+
+    def user_has_active_shadow_ban(
+        self,
+        connection: Connection,
+        *,
+        user_id: int,
+        current_round_id: int,
+    ) -> bool:
+        if not self.has_table(connection, "shadow_ban"):
+            return False
+        shadow_ban = self.table("shadow_ban")
+        row = connection.execute(
+            select(shadow_ban.c.uid)
+            .where(shadow_ban.c.uid == int(user_id))
+            .where(shadow_ban.c.start_tid <= int(current_round_id))
+            .where((shadow_ban.c.duration.is_(None)) | ((shadow_ban.c.start_tid + shadow_ban.c.duration) >= int(current_round_id)))
+            .limit(1)
+        ).first()
+        return row is not None
+
     def seed_table_rows(
         self,
         connection: Connection,
