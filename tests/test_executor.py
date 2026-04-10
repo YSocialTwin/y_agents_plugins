@@ -8,6 +8,7 @@ from sqlalchemy import text
 from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec, SimulationRound
 from y_agents_plugins.db import ExperimentDatabase
 from y_agents_plugins.plugins.moderator import ModeratorAgent
+from y_agents_plugins.plugins.propaganda import PropagandaAgent
 from y_agents_plugins.runtime.executor import ActionExecutor
 
 
@@ -25,6 +26,7 @@ def _build_db(path: Path) -> sqlite3.Connection:
             owner TEXT,
             interests TEXT,
             age INTEGER,
+            leaning TEXT,
             left_on INTEGER
         );
         CREATE TABLE post (
@@ -51,6 +53,17 @@ def _build_db(path: Path) -> sqlite3.Connection:
             post_id INTEGER NOT NULL,
             toxicity REAL DEFAULT 0 NOT NULL
         );
+        CREATE TABLE post_topics (
+            post_id INTEGER NOT NULL,
+            topic_id INTEGER NOT NULL
+        );
+        CREATE TABLE mentions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            post_id INTEGER NOT NULL,
+            round INTEGER NOT NULL,
+            answered INTEGER DEFAULT 0
+        );
         CREATE TABLE sys_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             type TEXT NOT NULL,
@@ -59,7 +72,30 @@ def _build_db(path: Path) -> sqlite3.Connection:
             from_round INTEGER,
             duration INTEGER
         );
+        CREATE TABLE propaganda_activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_uid INTEGER NOT NULL,
+            propaganda_agent_uid INTEGER NOT NULL,
+            thread_id INTEGER NOT NULL,
+            discussion_round_id INTEGER NOT NULL,
+            target_opinion REAL,
+            topic_id INTEGER NOT NULL
+        );
+        CREATE TABLE interests (
+            iid INTEGER PRIMARY KEY,
+            topic TEXT
+        );
+        CREATE TABLE agent_opinion (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id INTEGER NOT NULL,
+            tid INTEGER NOT NULL,
+            topic_id INTEGER NOT NULL,
+            id_interacted_with INTEGER NOT NULL,
+            id_post INTEGER NOT NULL,
+            opinion REAL NOT NULL
+        );
         INSERT INTO rounds (day, hour) VALUES (0, 0);
+        INSERT INTO interests (iid, topic) VALUES (1, 'Climate');
         INSERT INTO user_mgmt (id, username, email, password, user_type, owner)
         VALUES (1, 'hello_1', 'hello_1@example.org', 'secret', 'moderator', 'experiment');
         """
@@ -103,6 +139,129 @@ def test_executor_persists_post_action(tmp_path: Path) -> None:
     )
 
     assert count == 1
+    sa_connection.close()
+    connection.close()
+
+
+def test_executor_extracts_mentions_for_plugin_posts_and_comments(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment')"
+    )
+    connection.commit()
+    database = ExperimentDatabase(db_path)
+    executor = ActionExecutor(database)
+    sa_connection = database.connect()
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=(),
+        recent_posts=(),
+        managed_agents=(),
+    )
+    agent = AgentSpec(
+        name="Propaganda One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="propaganda",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+
+    executor.execute(
+        sa_connection,
+        context=context,
+        agent=agent,
+        action=AgentAction(
+            agent_type="propaganda",
+            action_type="CREATE_POST",
+            payload={"text": "@target_1 Please reconsider this issue."},
+        ),
+    )
+    created_post_id = sa_connection.execute(text("select max(id) from post")).scalar_one()
+    mentions = sa_connection.execute(
+        text("select user_id, post_id, round, answered from mentions order by id")
+    ).fetchall()
+    assert mentions == [(2, created_post_id, 1, 0)]
+    topics = sa_connection.execute(
+        text("select post_id, topic_id from post_topics order by topic_id")
+    ).fetchall()
+    assert topics == []
+
+    executor.execute(
+        sa_connection,
+        context=context,
+        agent=agent,
+        action=AgentAction(
+            agent_type="propaganda",
+            action_type="CREATE_COMMENT",
+            payload={
+                "text": "@target_1 Here is a follow-up thought.",
+                "parent_post_id": int(created_post_id),
+            },
+        ),
+    )
+    comment_mentions = sa_connection.execute(
+        text("select count(*) from mentions where post_id != :post_id"),
+        {"post_id": int(created_post_id)},
+    ).scalar_one()
+    assert comment_mentions == 1
+    sa_connection.close()
+    connection.close()
+
+
+def test_executor_persists_propaganda_topic_ids_on_posts(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment')"
+    )
+    connection.commit()
+    database = ExperimentDatabase(db_path)
+    executor = ActionExecutor(database)
+    sa_connection = database.connect()
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=(),
+        recent_posts=(),
+        managed_agents=(),
+    )
+    agent = AgentSpec(
+        name="Propaganda One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="propaganda",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    executor.execute(
+        sa_connection,
+        context=context,
+        agent=agent,
+        action=AgentAction(
+            agent_type="propaganda",
+            action_type="CREATE_POST",
+            payload={
+                "text": "@target_1 Let us discuss climate.",
+                "propaganda_activity": {
+                    "target_uid": 2,
+                    "topic_id": 1,
+                    "target_opinion": 0.1,
+                    "discussion_round_id": 1,
+                },
+            },
+        ),
+    )
+
+    assert sa_connection.execute(
+        text("select post_id, topic_id from post_topics order by post_id, topic_id")
+    ).fetchall() == [(1, 1)]
     sa_connection.close()
     connection.close()
 
@@ -246,6 +405,322 @@ def test_moderator_can_generate_personalized_sys_message_and_persist_it(tmp_path
     assert moderated["moderated"] == 1
     assert moderation_comment["tweet"] == "Your message violated the moderation policy."
     assert moderation_comment["comment_to"] == 1
+    sa_connection.close()
+    connection.close()
+
+
+def test_propaganda_agent_starts_thread_and_records_activity(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age) VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 'climate', 30)"
+    )
+    connection.execute(
+        "INSERT INTO agent_opinion (agent_id, tid, topic_id, id_interacted_with, id_post, opinion) VALUES (2, 1, 1, 2, 0, 0.10)"
+    )
+    connection.commit()
+
+    class StubLLM:
+        is_available = True
+
+        def invoke_text(self, *, system_prompt: str, user_prompt: str) -> str:
+            assert "propaganda" in system_prompt.lower()
+            assert "non-toxic" in system_prompt.lower()
+            assert "avoid toxicity" in user_prompt.lower()
+            assert "target_1" in user_prompt
+            return '"target_1@ysocial.it you may be underestimating the benefits of climate action."'
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    PropagandaAgent(
+        settings={
+            "propaganda_campaigns": [
+                {
+                    "topic_id": 99,
+                    "topic_name": "Climate",
+                    "target_opinion": 0.9,
+                    "target_agent_opinion_group": "Opposed",
+                    "target_agent_opinion_group_bounds": {
+                        "name": "Opposed",
+                        "lower_bound": 0.0,
+                        "upper_bound": 0.2,
+                        "value": 0.1,
+                    },
+                }
+            ],
+            "epsilon": 0.05,
+            "max_interaction_rounds": 4,
+        },
+        llm_client=StubLLM(),
+    ).setup_database(database, sa_connection)
+    agent = AgentSpec(
+        name="Propaganda One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="propaganda",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=5),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+    propaganda = PropagandaAgent(
+        settings={
+            "propaganda_campaigns": [
+                {
+                    "topic_id": 99,
+                    "topic_name": "Climate",
+                    "target_opinion": 0.9,
+                    "target_agent_opinion_group": "Opposed",
+                    "target_agent_opinion_group_bounds": {
+                        "name": "Opposed",
+                        "lower_bound": 0.0,
+                        "upper_bound": 0.2,
+                        "value": 0.1,
+                    },
+                }
+            ],
+            "epsilon": 0.05,
+            "max_interaction_rounds": 4,
+        },
+        llm_client=StubLLM(),
+    )
+    propaganda.setup_database(database, sa_connection)
+    actions = propaganda.on_tick(context, agent)
+
+    assert [action.action_type for action in actions] == ["READ", "CREATE_POST"]
+
+    executor = ActionExecutor(database)
+    executor.execute(sa_connection, context=context, agent=agent, action=actions[1])
+
+    post = sa_connection.execute(
+        text("SELECT id, tweet FROM post WHERE id = 1 ORDER BY id DESC")
+    ).fetchone()
+    activity = sa_connection.execute(
+        text(
+            "SELECT target_uid, propaganda_agent_uid, thread_id, discussion_round_id, target_opinion, topic_id "
+            "FROM propaganda_activity ORDER BY id DESC LIMIT 1"
+        )
+    ).fetchone()
+
+    assert post is not None
+    assert post[1].startswith("@target_1 ")
+    assert activity == (2, 1, 1, 1, 0.1, 1)
+    sa_connection.close()
+    connection.close()
+
+
+def test_propaganda_agent_replies_and_tracks_updated_opinion(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.executescript(
+        """
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age)
+        VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 'climate', 30);
+        INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from)
+        VALUES (1, '@target_1 opening nudge', 1, -1, NULL, 1, -1);
+        INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from)
+        VALUES (2, '@hello_1 I am not convinced yet', 2, 1, 1, 2, -1);
+        INSERT INTO agent_opinion (agent_id, tid, topic_id, id_interacted_with, id_post, opinion)
+        VALUES (2, 1, 1, 2, 1, 0.10);
+        INSERT INTO agent_opinion (agent_id, tid, topic_id, id_interacted_with, id_post, opinion)
+        VALUES (2, 2, 1, 1, 2, 0.35);
+        INSERT INTO rounds (day, hour) VALUES (0, 1);
+        """
+    )
+    connection.commit()
+
+    class StubLLM:
+        is_available = True
+
+        def invoke_text(self, *, system_prompt: str, user_prompt: str) -> str:
+            assert "observed opinion shift" in user_prompt.lower()
+            assert "non-toxic" in system_prompt.lower()
+            assert "avoid toxicity" in user_prompt.lower()
+            return "@target_1 consider how that evidence changes the climate trade-off."
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    propaganda = PropagandaAgent(
+        settings={
+            "propaganda_campaigns": [
+                {
+                    "topic_id": 1,
+                    "topic_name": "Climate",
+                    "target_opinion": 0.9,
+                    "target_agent_opinion_group": "Opposed",
+                    "target_agent_opinion_group_bounds": {
+                        "name": "Opposed",
+                        "lower_bound": 0.0,
+                        "upper_bound": 0.2,
+                        "value": 0.1,
+                    },
+                }
+            ],
+            "epsilon": 0.05,
+            "max_interaction_rounds": 4,
+        },
+        llm_client=StubLLM(),
+    )
+    propaganda.setup_database(database, sa_connection)
+    database.insert_propaganda_activity(
+        sa_connection,
+        target_uid=2,
+        propaganda_agent_uid=1,
+        thread_id=1,
+        discussion_round_id=1,
+        target_opinion=0.10,
+        topic_id=1,
+    )
+    agent = AgentSpec(
+        name="Propaganda One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="propaganda",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=2, day=0, slot=1),
+        previous_round=SimulationRound(id=1, day=0, slot=0),
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=2, limit=10),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+
+    actions = propaganda.on_tick(context, agent)
+
+    assert [action.action_type for action in actions] == ["READ", "CREATE_COMMENT"]
+    assert actions[1].payload["parent_post_id"] == 2
+
+    executor = ActionExecutor(database)
+    executor.execute(sa_connection, context=context, agent=agent, action=actions[1])
+
+    reply = sa_connection.execute(
+        text("SELECT tweet, comment_to, thread_id FROM post WHERE id = 3")
+    ).fetchone()
+    activity = sa_connection.execute(
+        text(
+            "SELECT target_uid, thread_id, discussion_round_id, target_opinion, topic_id "
+            "FROM propaganda_activity ORDER BY id DESC LIMIT 1"
+        )
+    ).fetchone()
+
+    assert "@target_1" in reply[0]
+    assert reply[1:] == (2, 1)
+    assert activity == (2, 1, 2, 0.35, 1)
+    sa_connection.close()
+    connection.close()
+
+
+def test_propaganda_agent_can_open_multiple_filtered_targets_up_to_capacity(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.executescript(
+        """
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age, leaning)
+        VALUES
+            (2, 'target_left_young_1', 'a@example.org', 'secret', 'human', 'experiment', 'climate', 22, 'Left'),
+            (3, 'target_left_young_2', 'b@example.org', 'secret', 'human', 'experiment', 'climate', 24, 'Left'),
+            (4, 'target_right_old', 'c@example.org', 'secret', 'human', 'experiment', 'climate', 55, 'Right');
+        INSERT INTO agent_opinion (agent_id, tid, topic_id, id_interacted_with, id_post, opinion)
+        VALUES
+            (2, 1, 1, 2, 0, 0.10),
+            (3, 1, 1, 3, 0, 0.12),
+            (4, 1, 1, 4, 0, 0.05);
+        """
+    )
+    connection.commit()
+
+    class StubLLM:
+        is_available = True
+
+        def invoke_text(self, *, system_prompt: str, user_prompt: str) -> str:
+            if "target_left_young_1" in user_prompt:
+                return "@target_left_young_1 climate action can help your community."
+            if "target_left_young_2" in user_prompt:
+                return "@target_left_young_2 climate action can help your community."
+            return "@fallback climate action matters."
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    propaganda = PropagandaAgent(
+        settings={
+            "propaganda_campaigns": [
+                {
+                    "topic_id": 1,
+                    "topic_name": "Climate",
+                    "target_opinion": 0.8,
+                    "target_opinion_group": "Supportive",
+                    "target_agent_opinion_group": "Opposed",
+                    "target_agent_opinion_group_bounds": {
+                        "name": "Opposed",
+                        "lower_bound": 0.0,
+                        "upper_bound": 0.2,
+                        "value": 0.1,
+                    },
+                    "target_leaning": "Left",
+                    "target_age_classes": [
+                        {"name": "Young", "age_start": 18, "age_end": 30}
+                    ],
+                }
+            ],
+            "epsilon": 0.05,
+            "max_interaction_rounds": 4,
+            "max_concurrent_targets": 2,
+        },
+        llm_client=StubLLM(),
+    )
+    propaganda.setup_database(database, sa_connection)
+    agent = AgentSpec(
+        name="Propaganda One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="propaganda",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=5),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+
+    actions = propaganda.on_tick(context, agent)
+
+    assert [action.action_type for action in actions] == [
+        "READ",
+        "CREATE_POST",
+        "CREATE_POST",
+    ]
+    payloads = [action.payload for action in actions[1:]]
+    target_ids = {payload["propaganda_activity"]["target_uid"] for payload in payloads}
+    assert target_ids == {2, 3}
+    assert all("@target_right_old" not in payload["text"] for payload in payloads)
+
+    executor = ActionExecutor(database)
+    for action in actions[1:]:
+        executor.execute(sa_connection, context=context, agent=agent, action=action)
+
+    activity_count = sa_connection.execute(
+        text("SELECT COUNT(*) FROM propaganda_activity")
+    ).fetchone()[0]
+    assert activity_count == 2
     sa_connection.close()
     connection.close()
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -248,6 +249,7 @@ class ExperimentDatabase:
         username: str,
         text: str,
         round_id: int,
+        topic_ids: list[int] | tuple[int, ...] | None = None,
     ) -> int:
         post = self.table("post")
         user_id = self.get_user_id(connection, username)
@@ -264,6 +266,17 @@ class ExperimentDatabase:
             .returning(post.c.id)
         )
         post_id = int(result.scalar_one())
+        self._insert_mentions_for_text(
+            connection,
+            text=text,
+            post_id=post_id,
+            round_id=round_id,
+        )
+        self._insert_post_topics(
+            connection,
+            post_id=post_id,
+            topic_ids=topic_ids,
+        )
         connection.commit()
         return post_id
 
@@ -276,6 +289,7 @@ class ExperimentDatabase:
         round_id: int,
         parent_post_id: int,
         is_moderation_comment: bool = False,
+        topic_ids: list[int] | tuple[int, ...] | None = None,
     ) -> int:
         post = self.table("post")
         user_id = self.get_user_id(connection, username)
@@ -297,8 +311,362 @@ class ExperimentDatabase:
             values["is_moderation_comment"] = int(bool(is_moderation_comment))
         result = connection.execute(post.insert().values(**values).returning(post.c.id))
         comment_id = int(result.scalar_one())
+        self._insert_mentions_for_text(
+            connection,
+            text=text,
+            post_id=comment_id,
+            round_id=round_id,
+        )
+        self._insert_post_topics(
+            connection,
+            post_id=comment_id,
+            topic_ids=topic_ids,
+        )
         connection.commit()
         return comment_id
+
+    def _insert_mentions_for_text(
+        self,
+        connection: Connection,
+        *,
+        text: str,
+        post_id: int,
+        round_id: int,
+    ) -> None:
+        if not text or not self.has_table(connection, "mentions"):
+            return
+
+        mention_table = self.table("mentions")
+        usernames = {
+            match.group(1).strip()
+            for match in re.finditer(r"(?<!\w)@([A-Za-z0-9_]+)", str(text))
+            if match.group(1).strip()
+        }
+        if not usernames:
+            return
+
+        user_mgmt = self.table("user_mgmt")
+        rows = connection.execute(
+            select(user_mgmt.c.id, user_mgmt.c.username).where(
+                user_mgmt.c.username.in_(tuple(usernames))
+            )
+        ).mappings().all()
+        if not rows:
+            return
+
+        existing_user_ids = {
+            int(row[0])
+            for row in connection.execute(
+                select(mention_table.c.user_id).where(mention_table.c.post_id == int(post_id))
+            ).all()
+        }
+        for row in rows:
+            user_id = int(row["id"])
+            if user_id in existing_user_ids:
+                continue
+            connection.execute(
+                mention_table.insert().values(
+                    user_id=user_id,
+                    post_id=int(post_id),
+                    round=int(round_id),
+                    answered=0,
+                )
+            )
+
+    def _insert_post_topics(
+        self,
+        connection: Connection,
+        *,
+        post_id: int,
+        topic_ids: list[int] | tuple[int, ...] | None,
+    ) -> None:
+        if not topic_ids or not self.has_table(connection, "post_topics"):
+            return
+        post_topics = self.table("post_topics")
+        existing_topic_ids = {
+            int(row[0])
+            for row in connection.execute(
+                select(post_topics.c.topic_id).where(post_topics.c.post_id == int(post_id))
+            ).all()
+        }
+        for topic_id in topic_ids:
+            topic_id = int(topic_id)
+            if topic_id in existing_topic_ids:
+                continue
+            connection.execute(
+                post_topics.insert().values(
+                    post_id=int(post_id),
+                    topic_id=topic_id,
+                )
+            )
+
+    def get_latest_agent_opinion(
+        self,
+        connection: Connection,
+        *,
+        user_id: int,
+        topic_id: int,
+        current_round_id: int | None = None,
+    ) -> float | None:
+        if not self.has_table(connection, "agent_opinion"):
+            return None
+        agent_opinion = self.table("agent_opinion")
+        statement = (
+            select(agent_opinion.c.opinion)
+            .where(agent_opinion.c.agent_id == int(user_id))
+            .where(agent_opinion.c.topic_id == int(topic_id))
+        )
+        if current_round_id is not None:
+            statement = statement.where(agent_opinion.c.tid <= int(current_round_id))
+        row = connection.execute(
+            statement.order_by(agent_opinion.c.tid.desc(), agent_opinion.c.id.desc()).limit(1)
+        ).first()
+        return None if row is None else float(row[0])
+
+    def get_latest_opinions_for_topic(
+        self,
+        connection: Connection,
+        *,
+        topic_id: int,
+        current_round_id: int | None = None,
+    ) -> tuple[dict[str, float | int], ...]:
+        if not self.has_table(connection, "agent_opinion"):
+            return ()
+        agent_opinion = self.table("agent_opinion")
+        statement = select(
+            agent_opinion.c.agent_id,
+            agent_opinion.c.opinion,
+            agent_opinion.c.tid,
+            agent_opinion.c.id,
+        ).where(agent_opinion.c.topic_id == int(topic_id))
+        if current_round_id is not None:
+            statement = statement.where(agent_opinion.c.tid <= int(current_round_id))
+        rows = connection.execute(
+            statement.order_by(
+                agent_opinion.c.agent_id.asc(),
+                agent_opinion.c.tid.desc(),
+                agent_opinion.c.id.desc(),
+            )
+        ).mappings().all()
+        latest: dict[int, dict[str, float | int]] = {}
+        for row in rows:
+            agent_id = int(row["agent_id"])
+            if agent_id in latest:
+                continue
+            latest[agent_id] = {
+                "user_id": agent_id,
+                "opinion": float(row["opinion"]),
+                "round_id": int(row["tid"]),
+            }
+        return tuple(latest.values())
+
+    def resolve_interest_topic_id(
+        self,
+        connection: Connection,
+        *,
+        configured_topic_id: int | None = None,
+        topic_name: str | None = None,
+    ) -> int | None:
+        if not self.has_table(connection, "interests"):
+            return configured_topic_id
+        interests = self.table("interests")
+        interest_column = (
+            interests.c.interest
+            if "interest" in interests.c
+            else interests.c.topic
+            if "topic" in interests.c
+            else None
+        )
+        if configured_topic_id is not None:
+            row = connection.execute(
+                select(interests.c.iid)
+                .where(interests.c.iid == int(configured_topic_id))
+                .limit(1)
+            ).first()
+            if row is not None:
+                return int(row[0])
+        normalized_name = str(topic_name or "").strip()
+        if interest_column is None or not normalized_name:
+            return None
+        rows = connection.execute(select(interests.c.iid, interest_column)).all()
+        for row in rows:
+            if str(row[1] or "").strip().casefold() == normalized_name.casefold():
+                return int(row[0])
+        return None
+
+    def get_thread_posts(
+        self,
+        connection: Connection,
+        *,
+        thread_id: int,
+        limit: int = 20,
+    ) -> tuple[PostRecord, ...]:
+        post = self.table("post")
+        statement = (
+            select(
+                post.c.id,
+                post.c.user_id,
+                post.c.tweet,
+                post.c.round,
+                post.c.comment_to,
+                post.c.thread_id,
+                post.c.shared_from,
+                (post.c.moderated if "moderated" in post.c else literal(0)).label("moderated"),
+                (
+                    post.c.is_moderation_comment
+                    if "is_moderation_comment" in post.c
+                    else literal(0)
+                ).label("is_moderation_comment"),
+                literal(None).label("toxicity"),
+                literal(0).label("reported_count"),
+            )
+            .where((post.c.id == int(thread_id)) | (post.c.thread_id == int(thread_id)))
+            .order_by(post.c.id.asc())
+            .limit(int(limit))
+        )
+        rows = connection.execute(statement).mappings().all()
+        return tuple(
+            PostRecord(
+                id=int(row["id"]),
+                author_id=int(row["user_id"]),
+                text=str(row["tweet"]),
+                round_id=int(row["round"]),
+                comment_to=_nullable_int(row["comment_to"]),
+                thread_id=_nullable_int(row["thread_id"]),
+                shared_from=_nullable_int(row["shared_from"]),
+                moderated=int(row["moderated"] or 0),
+                is_moderation_comment=int(row["is_moderation_comment"] or 0),
+                toxicity=None,
+                reported_count=int(row["reported_count"] or 0),
+            )
+            for row in rows
+        )
+
+    def get_latest_thread_post_by_user(
+        self,
+        connection: Connection,
+        *,
+        thread_id: int,
+        user_id: int,
+        after_round_id: int | None = None,
+    ) -> PostRecord | None:
+        posts = self.get_thread_posts(connection, thread_id=thread_id, limit=200)
+        candidates = [
+            post
+            for post in posts
+            if post.author_id == int(user_id)
+            and (after_round_id is None or post.round_id > int(after_round_id))
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda post: (post.round_id, post.id))
+
+    def insert_propaganda_activity(
+        self,
+        connection: Connection,
+        *,
+        target_uid: int,
+        propaganda_agent_uid: int,
+        thread_id: int,
+        discussion_round_id: int,
+        target_opinion: float | None,
+        topic_id: int,
+    ) -> int:
+        activity = self.table("propaganda_activity")
+        result = connection.execute(
+            activity.insert()
+            .values(
+                target_uid=int(target_uid),
+                propaganda_agent_uid=int(propaganda_agent_uid),
+                thread_id=int(thread_id),
+                discussion_round_id=int(discussion_round_id),
+                target_opinion=target_opinion,
+                topic_id=int(topic_id),
+            )
+            .returning(activity.c.id)
+        )
+        activity_id = int(result.scalar_one())
+        connection.commit()
+        return activity_id
+
+    def count_propaganda_actions_for_thread(
+        self,
+        connection: Connection,
+        *,
+        propaganda_agent_uid: int,
+        thread_id: int,
+    ) -> int:
+        if not self.has_table(connection, "propaganda_activity"):
+            return 0
+        activity = self.table("propaganda_activity")
+        row = connection.execute(
+            select(func.count())
+            .select_from(activity)
+            .where(activity.c.propaganda_agent_uid == int(propaganda_agent_uid))
+            .where(activity.c.thread_id == int(thread_id))
+        ).first()
+        return int(row[0] or 0)
+
+    def get_latest_propaganda_thread_state(
+        self,
+        connection: Connection,
+        *,
+        propaganda_agent_uid: int,
+    ) -> dict[str, int | float | None] | None:
+        if not self.has_table(connection, "propaganda_activity"):
+            return None
+        activity = self.table("propaganda_activity")
+        row = connection.execute(
+            select(activity)
+            .where(activity.c.propaganda_agent_uid == int(propaganda_agent_uid))
+            .order_by(activity.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+        if row is None:
+            return None
+        return {
+            "id": int(row["id"]),
+            "target_uid": int(row["target_uid"]),
+            "propaganda_agent_uid": int(row["propaganda_agent_uid"]),
+            "thread_id": int(row["thread_id"]),
+            "discussion_round_id": int(row["discussion_round_id"]),
+            "target_opinion": (
+                None if row["target_opinion"] is None else float(row["target_opinion"])
+            ),
+            "topic_id": int(row["topic_id"]),
+        }
+
+    def get_latest_propaganda_thread_states(
+        self,
+        connection: Connection,
+        *,
+        propaganda_agent_uid: int,
+    ) -> tuple[dict[str, int | float | None], ...]:
+        if not self.has_table(connection, "propaganda_activity"):
+            return ()
+        activity = self.table("propaganda_activity")
+        rows = connection.execute(
+            select(activity)
+            .where(activity.c.propaganda_agent_uid == int(propaganda_agent_uid))
+            .order_by(activity.c.thread_id.asc(), activity.c.id.desc())
+        ).mappings().all()
+        latest: dict[int, dict[str, int | float | None]] = {}
+        for row in rows:
+            thread_id = int(row["thread_id"])
+            if thread_id in latest:
+                continue
+            latest[thread_id] = {
+                "id": int(row["id"]),
+                "target_uid": int(row["target_uid"]),
+                "propaganda_agent_uid": int(row["propaganda_agent_uid"]),
+                "thread_id": thread_id,
+                "discussion_round_id": int(row["discussion_round_id"]),
+                "target_opinion": (
+                    None if row["target_opinion"] is None else float(row["target_opinion"])
+                ),
+                "topic_id": int(row["topic_id"]),
+            }
+        return tuple(latest.values())
 
     def count_posts_by_username_and_text(
         self,
@@ -601,6 +969,30 @@ class ExperimentDatabase:
         table = self.table(table_name)
         row = connection.execute(select(func.count()).select_from(table)).first()
         return int(row[0])
+
+    def count_rows_for_user_day(
+        self,
+        connection: Connection,
+        *,
+        table_name: str,
+        user_column: str,
+        user_id: int,
+        day: int,
+    ) -> int:
+        table = self.table(table_name)
+        rounds = self.table("rounds")
+        round_column = (
+            table.c.round_id
+            if "round_id" in table.c
+            else table.c.discussion_round_id
+        )
+        row = connection.execute(
+            select(func.count())
+            .select_from(table.join(rounds, rounds.c.id == round_column))
+            .where(getattr(table.c, user_column) == int(user_id))
+            .where(rounds.c.day == int(day))
+        ).first()
+        return int(row[0] or 0)
 
     def _validate_connectivity(self) -> None:
         with self.engine.connect() as connection:

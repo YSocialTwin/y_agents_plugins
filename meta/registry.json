@@ -196,6 +196,96 @@
           "description": "Number of infractions within the configured window that triggers a warning. The next infraction within the same window permanently bans the user."
         }
       ]
+    },
+    {
+      "agent_type": "propaganda",
+      "display_name": "Propaganda Agent",
+      "llm_required": true,
+      "requires_opinion_dynamics": true,
+      "description": "Targets regular agents on configured opinion-dynamics topics, opens tagged persuasion threads, and adapts its nudging strategy based on observed opinion shifts over time.",
+      "parameter_sections": [
+        {
+          "key": "core",
+          "label": "Core Configuration",
+          "description": "Base agent identity and scheduling settings."
+        }
+      ],
+      "client_parameter_sections": [
+        {
+          "key": "campaign",
+          "label": "Campaign Targets",
+          "description": "Experiment-specific topics and target opinion values to steer."
+        },
+        {
+          "key": "conversation",
+          "label": "Conversation Policy",
+          "description": "Stopping conditions and adaptation sensitivity for persuasion threads."
+        }
+      ],
+      "parameters": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "section": "core",
+          "description": "Human-readable agent name stored in the YSocial experiment population."
+        },
+        {
+          "name": "activity_profile",
+          "type": "string",
+          "required": true,
+          "section": "core",
+          "description": "Name of a simulation.activity_profiles entry from the client configuration."
+        },
+        {
+          "name": "daily_budget",
+          "type": "number",
+          "required": true,
+          "default": 24,
+          "section": "core",
+          "description": "Maximum number of persuasion actions the agent can perform in one simulation day."
+        }
+      ],
+      "client_parameters": [
+        {
+          "name": "propaganda_campaigns",
+          "type": "topic_targets",
+          "required": true,
+          "section": "campaign",
+          "description": "Define one or more persuasion campaigns by choosing an experiment topic, the desired target opinion category, and optional demographic filters for the users to target.",
+          "starting_opinion_options": [
+            "any",
+            "opposite",
+            "moderate",
+            "against",
+            "in_favor"
+          ]
+        },
+        {
+          "name": "max_concurrent_targets",
+          "type": "integer",
+          "required": true,
+          "default": 1,
+          "section": "conversation",
+          "description": "Maximum number of target users this propaganda agent may handle at the same time across active persuasion threads."
+        },
+        {
+          "name": "epsilon",
+          "type": "float",
+          "required": true,
+          "default": 0.05,
+          "section": "conversation",
+          "description": "Stop the persuasion thread once the target user's latest opinion is within this tolerance of the configured target value."
+        },
+        {
+          "name": "max_interaction_rounds",
+          "type": "integer",
+          "required": true,
+          "default": 4,
+          "section": "conversation",
+          "description": "Maximum number of propaganda messages the agent may emit within one persuasion thread before stopping."
+        }
+      ]
     }
   ]
 }

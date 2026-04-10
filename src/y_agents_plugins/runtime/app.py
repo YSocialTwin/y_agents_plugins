@@ -5,7 +5,12 @@ import logging
 from y_agents_plugins.config import AppConfig
 from y_agents_plugins.db import ExperimentDatabase
 from y_agents_plugins.llm import LangChainTextGenerator
-from y_agents_plugins.plugins import AgentTypeRegistry, HelloWorldAgent, ModeratorAgent
+from y_agents_plugins.plugins import (
+    AgentTypeRegistry,
+    HelloWorldAgent,
+    ModeratorAgent,
+    PropagandaAgent,
+)
 from y_agents_plugins.runtime.executor import ActionExecutor
 from y_agents_plugins.runtime.loader import AgentSpecLoader
 from y_agents_plugins.runtime.loop import SimulationLoop
@@ -78,5 +83,6 @@ class ClientApp:
 def build_default_registry() -> AgentTypeRegistry:
     registry = AgentTypeRegistry()
     registry.register(ModeratorAgent)
+    registry.register(PropagandaAgent)
     registry.register(HelloWorldAgent)
     return registry

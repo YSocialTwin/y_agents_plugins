@@ -14,6 +14,7 @@ from y_agents_plugins.config import (
     SimulationConfig,
 )
 from y_agents_plugins.runtime import ClientApp
+from y_agents_plugins.runtime.app import build_default_registry
 from y_agents_plugins.runtime import manifest as manifest_module
 
 
@@ -258,6 +259,12 @@ def test_agents_json_defaults_to_simulation_population_path(tmp_path: Path) -> N
     )
 
     assert config.client.agents_json_path == agents_path
+
+
+def test_default_registry_includes_propaganda_agent() -> None:
+    registry = build_default_registry()
+
+    assert "propaganda" in registry.supported_types
 
 
 def test_missing_agent_required_fields_are_rejected(tmp_path: Path) -> None:
