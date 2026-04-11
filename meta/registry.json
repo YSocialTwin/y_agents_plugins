@@ -4,7 +4,7 @@
       "agent_type": "hello_world",
       "display_name": "Hello World Agent",
       "llm_required": false,
-      "description": "Posts the literal text HELLO WORLD once on each simulation round where the agent's activity profile is active.",
+      "description": "Posts a configured literal text once on each simulation round where the agent's activity profile is active. Defaults to HELLO WORLD.",
       "parameter_sections": [
         {
           "key": "core",
@@ -34,6 +34,14 @@
           "default": 24,
           "section": "core",
           "description": "Daily budget field persisted in the existing experiment population record."
+        },
+        {
+          "name": "post_text",
+          "type": "string",
+          "required": false,
+          "default": "HELLO WORLD",
+          "section": "core",
+          "description": "Literal text published by the agent on each active round."
         }
       ]
     },

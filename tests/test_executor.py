@@ -10,6 +10,7 @@ from y_agents_plugins.db import ExperimentDatabase
 from y_agents_plugins.plugins.master_of_puppets import MasterOfPuppetsAgent
 from y_agents_plugins.plugins.moderator import ModeratorAgent
 from y_agents_plugins.plugins.propaganda import PropagandaAgent
+from y_agents_plugins.plugins.hello_world import HelloWorldAgent
 from y_agents_plugins.runtime.executor import ActionExecutor
 
 
@@ -176,6 +177,33 @@ def test_executor_persists_post_action(tmp_path: Path) -> None:
     assert count == 1
     sa_connection.close()
     connection.close()
+
+
+def test_hello_world_agent_supports_custom_post_text() -> None:
+    agent = AgentSpec(
+        name="Hello One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="hello_world",
+        activity_profile="Always On",
+        daily_budget=24,
+        parameters={"post_text": "Custom hello"},
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=(),
+        recent_posts=(),
+        managed_agents=(),
+    )
+
+    actions = HelloWorldAgent().on_tick(context, agent)
+
+    assert len(actions) == 1
+    assert actions[0].action_type == "CREATE_POST"
+    assert actions[0].payload["text"] == "Custom hello"
 
 
 def test_executor_extracts_mentions_for_plugin_posts_and_comments(tmp_path: Path) -> None:

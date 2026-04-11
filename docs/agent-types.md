@@ -1,162 +1,218 @@
-# Defining A New Agent Type
+# Available Agent Types
 
-This project separates agent definition into two layers:
+This page documents the built-in ad hoc agent types shipped in `y_agents_plugins`.
 
-1. the Python implementation
-2. the packaged JSON catalog describing the type and its parameters
+Each client process binds to exactly one `agent_type`. The packaged catalog for YSocial/YWeb lives in `meta/registry.json`, while the Python implementations live under `src/y_agents_plugins/plugins/`.
 
-Both must be updated when you add a new deployable plugin agent.
+## Shared Core Parameters
 
-## 1. Implement the plugin class
+All built-in agent types expose these base population parameters:
 
-Create a new module under `src/y_agents_plugins/plugins/` and subclass `BaseAgentPlugin`.
+- `name`: human-readable agent name stored in the experiment population
+- `activity_profile`: name of a `simulation.activity_profiles` entry from the client configuration
+- `daily_budget`: numeric daily budget persisted in the experiment population
 
-Example:
+Some agent types also require extra client-level settings when the ad hoc client is created in YSocial.
 
-```python
-from __future__ import annotations
+## Hello World Agent
 
-from y_agents_plugins.plugins.base import BaseAgentPlugin
-from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec
+- `agent_type`: `hello_world`
+- Goal: publish a simple fixed message during each active round
+- LLM required: no
 
+### Behavior
 
-class GreeterAgent(BaseAgentPlugin):
-    agent_type = "greeter"
+On every active tick, the agent creates one post containing a configured literal text. The default text is `HELLO WORLD`.
 
-    def on_tick(self, context: AgentContext, agent: AgentSpec) -> list[AgentAction]:
-        return [
-            AgentAction(
-                agent_type=self.agent_type,
-                action_type="CREATE_POST",
-                payload={
-                    "text": f"hello from {agent.username}",
-                    "agent_username": agent.username,
-                    "round_id": context.current_round.id,
-                },
-            )
-        ]
-```
+### Parameters
 
-Rules:
+- `post_text`:
+  - Type: string
+  - Default: `HELLO WORLD`
+  - Meaning: the exact text posted on each active round
 
-- `agent_type` must be a stable string identifier.
-- `on_tick()` is called only when the current slot is active for that agent’s `activity_profile`.
-- `on_tick()` receives the current round, previous round, current users, recent posts, and the managed population.
-- Return `AgentAction` objects only. Persistence is handled by the runtime action executor.
+## Moderator Agent
 
-## 2. Register the type in the runtime registry
+- `agent_type`: `moderator`
+- Goal: detect problematic content and apply moderation interventions
+- LLM required: yes for `personalized`, no for `one-fits-all`
 
-Update `build_default_registry()` in `src/y_agents_plugins/runtime/app.py` so the client can instantiate the new class.
+### Behavior
 
-Example:
+During active rounds, the moderator scans recent unmoderated content. It prioritizes reported items and highly toxic items, then:
 
-```python
-from y_agents_plugins.plugins.greeter import GreeterAgent
+- creates a moderation notice in `sys_messages`
+- adds a visible moderation comment below the offending content
+- marks the post as moderated
 
+Optional escalation modes are also supported:
 
-def build_default_registry() -> AgentTypeRegistry:
-    registry = AgentTypeRegistry()
-    registry.register(ModeratorAgent)
-    registry.register(HelloWorldAgent)
-    registry.register(GreeterAgent)
-    return registry
-```
+- shadow ban
+- permanent ban
 
-If the type is not registered, client startup fails with an `Unknown agent_type` error.
+The moderator autonomously creates the plugin-owned moderation tables it needs if they are not already present.
 
-## 3. Add the type to the packaged agent catalog
+### Parameters
 
-Update `plugins_exposed/agent_types.json`.
+- `toxicity_threshold`:
+  - Type: float
+  - Default: `0.8`
+  - Meaning: minimum toxicity score that makes content eligible for moderation
+- `moderation_time_span`:
+  - Type: integer
+  - Default: `24`
+  - Meaning: number of rounds the moderation system message stays active
+- `moderation_action_type`:
+  - Type: enum `one-fits-all | personalized`
+  - Default: `one-fits-all`
+  - Meaning: whether notices are standardized or LLM-personalized
+- `candidate_window_rounds`:
+  - Type: integer
+  - Default: `1`
+  - Meaning: lookback window used to collect recent moderation candidates
 
-This file is loaded at runtime through `load_agent_type_manifest()` when the client starts. It is the machine-readable description of the plugin surface and should match the Python registry.
+### Shadow Ban Parameters
 
-Example entry:
+- `shadow_ban_enabled`:
+  - Type: enum `disabled | enabled`
+  - Default: `disabled`
+- `shadow_ban_infraction_window_rounds`:
+  - Type: integer
+  - Default: `24`
+  - Meaning: lookback window used to count prior infractions
+- `shadow_ban_n_infraction`:
+  - Type: integer
+  - Default: `3`
+  - Meaning: number of infractions needed to trigger a shadow ban
+- `shadow_ban_duration_rounds`:
+  - Type: integer
+  - Default: `24`
+  - Meaning: duration of the shadow ban in rounds
 
-```json
-{
-  "agent_type": "greeter",
-  "display_name": "Greeter Agent",
-  "description": "Publishes a greeting during active simulation slots.",
-  "parameters": [
-    {
-      "name": "name",
-      "type": "string",
-      "required": true,
-      "description": "Human-readable agent name."
-    },
-    {
-      "name": "activity_profile",
-      "type": "string",
-      "required": true,
-      "description": "Name of a profile from simulation.activity_profiles."
-    },
-    {
-      "name": "daily_budget",
-      "type": "number",
-      "required": true,
-      "description": "Budget field copied into the experiment population."
-    }
-  ]
-}
-```
+### Permanent Ban Parameters
 
-## Required agent fields
+- `ban_enabled`:
+  - Type: enum `disabled | enabled`
+  - Default: `disabled`
+- `ban_infraction_window_rounds`:
+  - Type: integer
+  - Default: `24`
+  - Meaning: lookback window used to count infractions for permanent-ban escalation
+- `ban_n_infraction`:
+  - Type: integer
+  - Default: `3`
+  - Meaning: warning threshold; the next infraction within the same window causes a permanent ban
 
-Every concrete agent entry loaded from the population JSON must provide:
+## Propaganda Agent
 
-- `name`
-- `activity_profile`
-- `daily_budget`
+- `agent_type`: `propaganda`
+- Goal: shift selected users toward a target opinion on configured opinion-dynamics topics
+- LLM required: yes
+- Requires opinion dynamics: yes
 
-In practice, an entry also needs:
+### Behavior
 
-- `username`
-- `email`
-- `agent_type`
+The propaganda agent:
 
-Optional extra keys are retained in `AgentSpec.parameters` so your plugin can consume them without creating new database columns.
+- selects a target user based on `agent_opinion`
+- opens a tagged persuasion thread on a configured topic
+- replies in-thread when the target user answers
+- measures observed opinion change after replies
+- stops once the target is close enough to the campaign goal, or once the conversation-round limit is reached
 
-## Activity profile behavior
+It also persists campaign progress into `propaganda_activity`.
 
-The runtime uses `client.simulation.activity_profiles` as the source of truth. A profile is a named list of allowed slots.
+### Core Parameters
 
-Example:
+- `epsilon`:
+  - Type: float
+  - Default: defined in the client form
+  - Meaning: tolerance used to decide whether the target reached the desired opinion
+- `max_interaction_rounds`:
+  - Type: integer
+  - Default: defined in the client form
+  - Meaning: maximum number of follow-up interaction rounds per persuasion thread
+- `max_concurrent_targets`:
+  - Type: integer
+  - Default: defined in the client form
+  - Meaning: maximum number of target users handled at the same time
 
-```json
-{
-  "activity_profiles": {
-    "Always On": "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23",
-    "Work Hours": "9,10,11,12,13,14,15,16,17",
-    "Night Shift": "0,1,2,3,4,22,23"
-  }
-}
-```
+### Client-Level Campaign Parameters
 
-If an agent refers to a profile name that is not defined in the client configuration, startup fails fast.
+Configured in YSocial when the ad hoc client is created:
 
-## Population JSON example
+- campaign topic
+- opinion propaganda target
+- target agent opinion group
+- optional political leaning filter
+- optional age-class filter
 
-```json
-[
-  {
-    "name": "Greeter One",
-    "username": "greeter_1",
-    "email": "greeter_1@example.org",
-    "password": "secret",
-    "agent_type": "greeter",
-    "activity_profile": "Work Hours",
-    "daily_budget": 12,
-    "parameters": {
-      "message_prefix": "hello"
-    }
-  }
-]
-```
+The topic choices and opinion classes are taken from the experiment and dashboard databases.
 
-## Validation checklist
+## Master of Puppets Agent
 
-- The Python class defines a non-empty `agent_type`.
-- The type is registered in `build_default_registry()`.
-- The same type is documented in `agent_types.json`.
-- The population JSON uses that exact `agent_type`.
-- The population JSON references an existing `activity_profile`.
+- `agent_type`: `master_of_puppets`
+- Goal: coordinate multiple rule-based puppet accounts to amplify selected topics and narratives
+- LLM required: yes
+
+### Behavior
+
+The Master of Puppets agent is an orchestrator. It does not directly behave like a normal conversational actor. Instead, it:
+
+- creates and maintains a fixed number of puppet accounts
+- replaces puppets that become banned
+- generates a daily schedule for each puppet
+- distributes the total daily budget across:
+  - posting
+  - support / boosting
+  - network building
+- executes puppet actions through the standard experiment tables
+
+Puppets can:
+
+- publish MoP-generated content
+- follow users
+- like or share sibling-puppet content
+
+The plugin creates and manages the following coordination tables:
+
+- `mop_registry`
+- `puppet_registry`
+- `daily_schedules`
+- `activity_logs`
+
+### Parameters
+
+- `puppet_count`:
+  - Type: integer
+  - Meaning: number of active puppet accounts MoP tries to maintain
+- `daily_budget`:
+  - Type: number
+  - Meaning: total daily action budget across all puppets
+- `post_budget_percentage`:
+  - Type: number
+  - Meaning: share of the total daily budget assigned to posting
+- `support_budget_percentage`:
+  - Type: number
+  - Meaning: share of the total daily budget assigned to liking/sharing sibling content
+- `network_budget_percentage`:
+  - Type: number
+  - Meaning: share of the total daily budget assigned to follow actions
+- `boost_lookback_hours`:
+  - Type: integer
+  - Meaning: how far back the agent looks for sibling posts that can be boosted
+
+### Client-Level Campaign Parameters
+
+Configured in YSocial when the ad hoc client is created:
+
+- target topic
+- optional opinion target class for that topic
+
+If an opinion class is configured, each puppet is seeded with the corresponding fixed opinion value in `agent_opinion`.
+
+## Implementation Notes
+
+- The runtime executor is responsible for writing posts, comments, reactions, follows, shares, and plugin side effects into the experiment database.
+- Plugin agents may create plugin-owned tables when needed, but they must continue to respect the YSocial client/server contract for standard simulation actors.
+- YSocial discovers these agent types through `meta/registry.json`, which also drives the dynamic form rendering for ad hoc client creation.
