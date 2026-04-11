@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec, SimulationRound
 from y_agents_plugins.db import ExperimentDatabase
+from y_agents_plugins.plugins.master_of_puppets import MasterOfPuppetsAgent
 from y_agents_plugins.plugins.moderator import ModeratorAgent
 from y_agents_plugins.plugins.propaganda import PropagandaAgent
 from y_agents_plugins.runtime.executor import ActionExecutor
@@ -64,6 +65,20 @@ def _build_db(path: Path) -> sqlite3.Connection:
             round INTEGER NOT NULL,
             answered INTEGER DEFAULT 0
         );
+        CREATE TABLE reactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            round INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            post_id INTEGER NOT NULL,
+            type TEXT NOT NULL
+        );
+        CREATE TABLE follow (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            follower_id INTEGER NOT NULL,
+            round INTEGER NOT NULL,
+            action TEXT NOT NULL
+        );
         CREATE TABLE sys_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             type TEXT NOT NULL,
@@ -93,6 +108,26 @@ def _build_db(path: Path) -> sqlite3.Connection:
             id_interacted_with INTEGER NOT NULL,
             id_post INTEGER NOT NULL,
             opinion REAL NOT NULL
+        );
+        CREATE TABLE daily_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            p_id INTEGER NOT NULL,
+            timestamp INTEGER NOT NULL,
+            action_type TEXT NOT NULL,
+            payload TEXT,
+            scheduled_time INTEGER NOT NULL,
+            schedule_day INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            executed_round_id INTEGER
+        );
+        CREATE TABLE activity_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            p_id INTEGER NOT NULL,
+            action_type TEXT NOT NULL,
+            target_post_id INTEGER,
+            status TEXT NOT NULL,
+            round_id INTEGER NOT NULL,
+            details TEXT
         );
         INSERT INTO rounds (day, hour) VALUES (0, 0);
         INSERT INTO interests (iid, topic) VALUES (1, 'Climate');
@@ -1408,5 +1443,390 @@ def test_moderator_permanently_bans_user_after_threshold_plus_one(tmp_path: Path
     assert left_on == (3,)
     assert banned_rows == [(2, 3)]
     assert database.user_is_banned(sa_connection, user_id=2) is True
+    sa_connection.close()
+    connection.close()
+
+
+class _FakeLLM:
+    is_available = True
+
+    def invoke_text(self, *, system_prompt: str, user_prompt: str) -> str:
+        if "Target username:" in user_prompt:
+            target = user_prompt.split("Target username:", 1)[1].splitlines()[0].strip()
+            return f"@{target} I think this topic deserves a closer look."
+        if "Target user:" in user_prompt:
+            target = user_prompt.split("Target user:", 1)[1].splitlines()[0].strip()
+            if target and target.lower() != "none":
+                return f"@{target} Climate deserves more attention."
+        return "Climate deserves more attention."
+
+
+def test_executor_supports_mop_puppet_actions(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment')"
+    )
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) VALUES (3, 'hello_1_puppet_1', 'puppet@example.org', 'secret', 'mop_puppet', 'hello_1')"
+    )
+    connection.execute(
+        "INSERT INTO daily_schedules (id, p_id, timestamp, action_type, payload, scheduled_time, schedule_day, status) VALUES (1, 3, 1, 'post', '{}', 1, 0, 'dispatched')"
+    )
+    connection.commit()
+    database = ExperimentDatabase(db_path)
+    executor = ActionExecutor(database)
+    sa_connection = database.connect()
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=(),
+        recent_posts=(),
+        managed_agents=(),
+    )
+    agent = AgentSpec(
+        name="MoP One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="master_of_puppets",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+
+    executor.execute(
+        sa_connection,
+        context=context,
+        agent=agent,
+        action=AgentAction(
+            agent_type="master_of_puppets",
+            action_type="CREATE_POST",
+            payload={
+                "acting_username": "hello_1_puppet_1",
+                "text": "@target_1 Climate matters.",
+                "topic_ids": [1],
+                "mop_activity": {
+                    "schedule_id": 1,
+                    "action_type": "post",
+                    "details": {"campaign_topic_id": 1},
+                },
+            },
+        ),
+    )
+    executor.execute(
+        sa_connection,
+        context=context,
+        agent=agent,
+        action=AgentAction(
+            agent_type="master_of_puppets",
+            action_type="FOLLOW_USER",
+            payload={
+                "acting_username": "hello_1_puppet_1",
+                "target_user_id": 2,
+                "mop_activity": {"action_type": "expand", "details": {"target_user_id": 2}},
+            },
+        ),
+    )
+    executor.execute(
+        sa_connection,
+        context=context,
+        agent=agent,
+        action=AgentAction(
+            agent_type="master_of_puppets",
+            action_type="REACT_POST",
+            payload={
+                "acting_username": "hello_1_puppet_1",
+                "post_id": 1,
+                "reaction_type": "like",
+                "mop_activity": {
+                    "action_type": "boost",
+                    "target_post_id": 1,
+                    "details": {"boost_mode": "like"},
+                },
+            },
+        ),
+    )
+    executor.execute(
+        sa_connection,
+        context=context,
+        agent=agent,
+        action=AgentAction(
+            agent_type="master_of_puppets",
+            action_type="SHARE_POST",
+            payload={
+                "acting_username": "hello_1_puppet_1",
+                "post_id": 1,
+                "text": "Climate matters.",
+                "topic_ids": [1],
+                "mop_activity": {
+                    "action_type": "boost",
+                    "target_post_id": 1,
+                    "details": {"boost_mode": "share"},
+                },
+            },
+        ),
+    )
+
+    assert sa_connection.execute(
+        text("select count(*) from post where user_id = 3")
+    ).scalar_one() == 2
+    assert sa_connection.execute(
+        text("select count(*) from follow where user_id = 3 and follower_id = 2 and action = 'follow'")
+    ).scalar_one() == 1
+    assert sa_connection.execute(
+        text("select count(*) from reactions where user_id = 3 and post_id = 1 and type = 'like'")
+    ).scalar_one() == 1
+    assert sa_connection.execute(
+        text("select status, executed_round_id from daily_schedules where id = 1")
+    ).fetchone() == ("executed", 1)
+    assert sa_connection.execute(
+        text("select count(*) from activity_logs where p_id = 3 and status = 'executed'")
+    ).scalar_one() == 4
+    sa_connection.close()
+    connection.close()
+
+
+def test_mop_spawns_puppets_and_generates_due_actions(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age, leaning) VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 'Climate', 30, 'Center')"
+    )
+    connection.commit()
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    mop = MasterOfPuppetsAgent(
+        settings={
+            "puppet_count": 2,
+            "post_budget_percentage": 50,
+            "support_budget_percentage": 0,
+            "network_budget_percentage": 50,
+            "boost_lookback_hours": 12,
+            "mop_campaigns": [
+                {
+                    "topic_id": 1,
+                    "topic_name": "Climate",
+                    "target_opinion": 0.8,
+                    "target_opinion_group": "Supportive",
+                }
+            ],
+        },
+        llm_client=_FakeLLM(),
+    )
+    mop.setup_database(database, sa_connection)
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=24, day=0, slot=23),
+        previous_round=SimulationRound(id=23, day=0, slot=22),
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=20),
+        managed_agents=(),
+        connection=sa_connection,
+    )
+    agent = AgentSpec(
+        name="MoP One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="master_of_puppets",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+
+    actions = mop.on_tick(context, agent)
+
+    assert sa_connection.execute(
+        text("select count(*) from puppet_registry where parent_mop_id = 1 and is_banned = 0")
+    ).scalar_one() == 2
+    assert sa_connection.execute(
+        text("select count(*) from daily_schedules")
+    ).scalar_one() >= 2
+    assert sa_connection.execute(
+        text("select count(*) from agent_opinion where topic_id = 1 and agent_id in (select p_id from puppet_registry)")
+    ).scalar_one() == 2
+    assert any(action.action_type == "CREATE_POST" for action in actions)
+    assert any(action.action_type == "FOLLOW_USER" for action in actions)
+    sa_connection.close()
+    connection.close()
+
+
+def test_mop_minimal_experiment_executes_post_expand_and_boost(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.executescript(
+        """
+        INSERT INTO rounds (id, day, hour) VALUES (24, 0, 23);
+        INSERT INTO rounds (id, day, hour) VALUES (48, 1, 23);
+        INSERT INTO rounds (id, day, hour) VALUES (72, 2, 23);
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age, leaning)
+        VALUES
+            (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 'Climate', 30, 'Center'),
+            (3, 'target_2', 'target_2@example.org', 'secret', 'human', 'experiment', 'Climate', 41, 'Center-Left'),
+            (4, 'target_3', 'target_3@example.org', 'secret', 'human', 'experiment', 'Climate', 27, 'Center-Right');
+        """
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    executor = ActionExecutor(database)
+    agent = AgentSpec(
+        name="MoP One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="master_of_puppets",
+        activity_profile="Always On",
+        daily_budget=2,
+    )
+
+    post_mop = MasterOfPuppetsAgent(
+        settings={
+            "puppet_count": 2,
+            "post_budget_percentage": 100,
+            "support_budget_percentage": 0,
+            "network_budget_percentage": 0,
+            "boost_lookback_hours": 72,
+            "mop_campaigns": [
+                {
+                    "topic_id": 1,
+                    "topic_name": "Climate",
+                    "target_opinion": 0.8,
+                    "target_opinion_group": "Supportive",
+                }
+            ],
+        },
+        llm_client=_FakeLLM(),
+    )
+    post_mop.setup_database(database, sa_connection)
+    day0_context = AgentContext(
+        client_id="mop-client",
+        current_round=SimulationRound(id=24, day=0, slot=23),
+        previous_round=SimulationRound(id=23, day=0, slot=22),
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=24, limit=20),
+        managed_agents=(),
+        connection=sa_connection,
+    )
+
+    day0_actions = [
+        action
+        for action in post_mop.on_tick(day0_context, agent)
+        if action.action_type != "READ"
+    ]
+    assert [action.action_type for action in day0_actions] == ["CREATE_POST", "CREATE_POST"]
+    for action in day0_actions:
+        executor.execute(sa_connection, context=day0_context, agent=agent, action=action)
+
+    assert sa_connection.execute(
+        text("select count(*) from post where user_id in (select p_id from puppet_registry)")
+    ).scalar_one() == 2
+    assert sa_connection.execute(
+        text("select count(*) from post_topics where post_id in (select id from post where user_id in (select p_id from puppet_registry))")
+    ).scalar_one() == 2
+    assert sa_connection.execute(
+        text("select count(*) from activity_logs where action_type = 'post' and status = 'executed'")
+    ).scalar_one() == 2
+
+    expand_mop = MasterOfPuppetsAgent(
+        settings={
+            "puppet_count": 2,
+            "post_budget_percentage": 0,
+            "support_budget_percentage": 0,
+            "network_budget_percentage": 100,
+            "boost_lookback_hours": 72,
+            "mop_campaigns": [
+                {
+                    "topic_id": 1,
+                    "topic_name": "Climate",
+                    "target_opinion": 0.8,
+                    "target_opinion_group": "Supportive",
+                }
+            ],
+        },
+        llm_client=_FakeLLM(),
+    )
+    expand_mop.setup_database(database, sa_connection)
+    day1_context = AgentContext(
+        client_id="mop-client",
+        current_round=SimulationRound(id=48, day=1, slot=23),
+        previous_round=SimulationRound(id=47, day=1, slot=22),
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=48, limit=20),
+        managed_agents=(),
+        connection=sa_connection,
+    )
+
+    day1_actions = [
+        action
+        for action in expand_mop.on_tick(day1_context, agent)
+        if action.action_type != "READ"
+    ]
+    assert [action.action_type for action in day1_actions] == ["FOLLOW_USER", "FOLLOW_USER"]
+    for action in day1_actions:
+        executor.execute(sa_connection, context=day1_context, agent=agent, action=action)
+
+    assert sa_connection.execute(text("select count(*) from follow")).scalar_one() == 2
+    assert sa_connection.execute(
+        text("select count(*) from activity_logs where action_type = 'expand' and status = 'executed'")
+    ).scalar_one() == 2
+
+    boost_mop = MasterOfPuppetsAgent(
+        settings={
+            "puppet_count": 2,
+            "post_budget_percentage": 0,
+            "support_budget_percentage": 100,
+            "network_budget_percentage": 0,
+            "boost_lookback_hours": 72,
+            "mop_campaigns": [
+                {
+                    "topic_id": 1,
+                    "topic_name": "Climate",
+                    "target_opinion": 0.8,
+                    "target_opinion_group": "Supportive",
+                }
+            ],
+        },
+        llm_client=_FakeLLM(),
+    )
+    boost_mop.setup_database(database, sa_connection)
+    day2_context = AgentContext(
+        client_id="mop-client",
+        current_round=SimulationRound(id=72, day=2, slot=23),
+        previous_round=SimulationRound(id=71, day=2, slot=22),
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=72, limit=50),
+        managed_agents=(),
+        connection=sa_connection,
+    )
+
+    import unittest.mock
+
+    with unittest.mock.patch(
+        "y_agents_plugins.plugins.master_of_puppets.random.random", return_value=0.9
+    ):
+        day2_actions = [
+            action
+            for action in boost_mop.on_tick(day2_context, agent)
+            if action.action_type != "READ"
+        ]
+    assert [action.action_type for action in day2_actions] == ["SHARE_POST", "SHARE_POST"]
+    for action in day2_actions:
+        executor.execute(sa_connection, context=day2_context, agent=agent, action=action)
+
+    assert sa_connection.execute(
+        text("select count(*) from post where shared_from != -1 and user_id in (select p_id from puppet_registry)")
+    ).scalar_one() == 2
+    assert sa_connection.execute(
+        text("select count(*) from post_topics where post_id in (select id from post where shared_from != -1)")
+    ).scalar_one() == 2
+    assert sa_connection.execute(
+        text("select count(*) from activity_logs where action_type = 'boost' and status = 'executed'")
+    ).scalar_one() == 2
+    assert sa_connection.execute(
+        text("select count(*) from agent_opinion where topic_id = 1 and opinion = 0.8 and agent_id in (select p_id from puppet_registry)")
+    ).scalar_one() == 2
+
     sa_connection.close()
     connection.close()

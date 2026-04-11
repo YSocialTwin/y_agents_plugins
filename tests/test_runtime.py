@@ -267,6 +267,12 @@ def test_default_registry_includes_propaganda_agent() -> None:
     assert "propaganda" in registry.supported_types
 
 
+def test_default_registry_includes_master_of_puppets_agent() -> None:
+    registry = build_default_registry()
+
+    assert "master_of_puppets" in registry.supported_types
+
+
 def test_missing_agent_required_fields_are_rejected(tmp_path: Path) -> None:
     agents_path = tmp_path / "agents.json"
     agents_path.write_text(

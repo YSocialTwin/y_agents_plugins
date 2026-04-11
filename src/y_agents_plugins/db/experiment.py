@@ -325,6 +325,183 @@ class ExperimentDatabase:
         connection.commit()
         return comment_id
 
+    def create_share(
+        self,
+        connection: Connection,
+        *,
+        username: str,
+        shared_post_id: int,
+        text: str,
+        round_id: int,
+        topic_ids: list[int] | tuple[int, ...] | None = None,
+    ) -> int:
+        post = self.table("post")
+        user_id = self.get_user_id(connection, username)
+        original = connection.execute(
+            select(post).where(post.c.id == int(shared_post_id)).limit(1)
+        ).mappings().first()
+        if original is None:
+            raise RuntimeError(f"Shared post '{shared_post_id}' not found in post table")
+        values: dict[str, Any] = {
+            "tweet": str(text or original.get("tweet") or ""),
+            "user_id": user_id,
+            "comment_to": -1,
+            "thread_id": None,
+            "round": round_id,
+            "shared_from": int(shared_post_id),
+        }
+        for optional_column in ("news_id", "image_id", "image_post_id"):
+            if optional_column in post.c and optional_column in original:
+                values[optional_column] = original[optional_column]
+        result = connection.execute(post.insert().values(**values).returning(post.c.id))
+        share_id = int(result.scalar_one())
+        if "thread_id" in post.c:
+            connection.execute(
+                post.update().where(post.c.id == int(share_id)).values(thread_id=int(share_id))
+            )
+        self._insert_mentions_for_text(
+            connection,
+            text=str(text or ""),
+            post_id=share_id,
+            round_id=round_id,
+        )
+        self._insert_post_topics(
+            connection,
+            post_id=share_id,
+            topic_ids=topic_ids,
+        )
+        connection.commit()
+        return share_id
+
+    def create_reaction(
+        self,
+        connection: Connection,
+        *,
+        username: str,
+        post_id: int,
+        reaction_type: str,
+        round_id: int,
+    ) -> int | None:
+        if not self.has_table(connection, "reactions"):
+            return None
+        reactions = self.table("reactions")
+        post = self.table("post")
+        user_id = self.get_user_id(connection, username)
+        result = connection.execute(
+            reactions.insert()
+            .values(
+                round=int(round_id),
+                user_id=int(user_id),
+                post_id=int(post_id),
+                type=str(reaction_type),
+            )
+            .returning(reactions.c.id)
+        )
+        reaction_id = int(result.scalar_one())
+        if "reaction_count" in post.c:
+            current = connection.execute(
+                select(post.c.reaction_count).where(post.c.id == int(post_id)).limit(1)
+            ).first()
+            if current is not None:
+                connection.execute(
+                    post.update()
+                    .where(post.c.id == int(post_id))
+                    .values(reaction_count=int(current[0] or 0) + 1)
+                )
+        connection.commit()
+        return reaction_id
+
+    def create_follow(
+        self,
+        connection: Connection,
+        *,
+        username: str,
+        target_user_id: int,
+        round_id: int,
+        action: str = "follow",
+    ) -> bool:
+        if not self.has_table(connection, "follow"):
+            return False
+        user_id = self.get_user_id(connection, username)
+        if int(user_id) == int(target_user_id):
+            return False
+        follow = self.table("follow")
+        existing = connection.execute(
+            select(follow.c.id, follow.c.action)
+            .where(follow.c.user_id == int(user_id))
+            .where(follow.c.follower_id == int(target_user_id))
+            .order_by(follow.c.round.desc(), follow.c.id.desc())
+            .limit(1)
+        ).first()
+        normalized_action = str(action or "follow").strip().lower()
+        if existing is not None and str(existing[1] or "").strip().lower() == normalized_action:
+            return False
+        if existing is None and normalized_action == "unfollow":
+            return False
+        connection.execute(
+            follow.insert().values(
+                user_id=int(user_id),
+                follower_id=int(target_user_id),
+                round=int(round_id),
+                action=normalized_action,
+            )
+        )
+        connection.commit()
+        return True
+
+    def create_plugin_user(
+        self,
+        connection: Connection,
+        *,
+        username: str,
+        email: str,
+        password: str,
+        user_type: str,
+        owner: str | None,
+        joined_on: int,
+        activity_profile: str | None = None,
+        daily_budget: float | None = None,
+    ) -> int:
+        user_mgmt = self.table("user_mgmt")
+        existing = connection.execute(
+            select(user_mgmt.c.id).where(user_mgmt.c.username == str(username)).limit(1)
+        ).first()
+        supported_columns = self._table_columns(connection, "user_mgmt")
+        values = {
+            "username": str(username),
+            "email": str(email),
+            "password": str(password),
+            "user_type": str(user_type),
+            "owner": owner,
+            "joined_on": int(joined_on),
+            "activity_profile": activity_profile,
+            "daily_budget": daily_budget,
+        }
+        filtered = {
+            key: value
+            for key, value in values.items()
+            if key in supported_columns and value is not None
+        }
+        if existing is None:
+            result = connection.execute(user_mgmt.insert().values(**filtered))
+            connection.commit()
+            inserted_id = result.inserted_primary_key[0] if result.inserted_primary_key else None
+            if inserted_id is None:
+                inserted = connection.execute(
+                    select(user_mgmt.c.id)
+                    .where(user_mgmt.c.username == str(username))
+                    .limit(1)
+                ).first()
+                if inserted is None:
+                    raise RuntimeError(f"Failed to create plugin user '{username}'")
+                return int(inserted[0])
+            return int(inserted_id)
+        connection.execute(
+            user_mgmt.update().where(user_mgmt.c.id == int(existing[0])).values(**filtered)
+        )
+        connection.commit()
+        return int(existing[0])
+
     def _insert_mentions_for_text(
         self,
         connection: Connection,
@@ -593,6 +770,101 @@ class ExperimentDatabase:
         if not candidates:
             return None
         return max(candidates, key=lambda post: (post.round_id, post.id))
+
+    def get_latest_thread_post_excluding_users(
+        self,
+        connection: Connection,
+        *,
+        thread_id: int,
+        excluded_user_ids: set[int] | list[int] | tuple[int, ...],
+        after_round_id: int | None = None,
+    ) -> PostRecord | None:
+        excluded = {int(user_id) for user_id in excluded_user_ids}
+        posts = self.get_thread_posts(connection, thread_id=thread_id, limit=200)
+        candidates = [
+            post
+            for post in posts
+            if int(post.author_id) not in excluded
+            and (after_round_id is None or int(post.round_id) > int(after_round_id))
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda post: (post.round_id, post.id))
+
+    def get_posts_by_author_ids_since_round(
+        self,
+        connection: Connection,
+        *,
+        author_ids: list[int] | tuple[int, ...] | set[int],
+        min_round_id: int,
+        limit: int = 100,
+    ) -> tuple[PostRecord, ...]:
+        author_ids = [int(author_id) for author_id in author_ids]
+        if not author_ids:
+            return ()
+        post = self.table("post")
+        rows = connection.execute(
+            select(
+                post.c.id,
+                post.c.user_id,
+                post.c.tweet,
+                post.c.round,
+                post.c.comment_to,
+                post.c.thread_id,
+                post.c.shared_from,
+                (post.c.moderated if "moderated" in post.c else literal(0)).label("moderated"),
+                (
+                    post.c.is_moderation_comment
+                    if "is_moderation_comment" in post.c
+                    else literal(0)
+                ).label("is_moderation_comment"),
+                literal(None).label("toxicity"),
+                literal(0).label("reported_count"),
+            )
+            .where(post.c.user_id.in_(author_ids))
+            .where(post.c.round >= int(min_round_id))
+            .order_by(post.c.round.desc(), post.c.id.desc())
+            .limit(int(limit))
+        ).mappings().all()
+        return tuple(
+            PostRecord(
+                id=int(row["id"]),
+                author_id=int(row["user_id"]),
+                text=str(row["tweet"]),
+                round_id=int(row["round"]),
+                comment_to=_nullable_int(row["comment_to"]),
+                thread_id=_nullable_int(row["thread_id"]),
+                shared_from=_nullable_int(row["shared_from"]),
+                moderated=int(row["moderated"] or 0),
+                is_moderation_comment=int(row["is_moderation_comment"] or 0),
+                toxicity=None,
+                reported_count=int(row["reported_count"] or 0),
+            )
+            for row in rows
+        )
+
+    def get_followed_user_ids(
+        self,
+        connection: Connection,
+        *,
+        username: str,
+    ) -> set[int]:
+        if not self.has_table(connection, "follow"):
+            return set()
+        follow = self.table("follow")
+        user_id = self.get_user_id(connection, username)
+        rows = connection.execute(
+            select(follow.c.follower_id, follow.c.action)
+            .where(follow.c.user_id == int(user_id))
+            .order_by(follow.c.round.asc(), follow.c.id.asc())
+        ).all()
+        followed: set[int] = set()
+        for target_id, action in rows:
+            if str(action or "").strip().lower() == "follow":
+                followed.add(int(target_id))
+            elif str(action or "").strip().lower() == "unfollow":
+                followed.discard(int(target_id))
+        return followed
 
     def insert_propaganda_activity(
         self,

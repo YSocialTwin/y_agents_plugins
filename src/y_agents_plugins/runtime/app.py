@@ -8,6 +8,7 @@ from y_agents_plugins.llm import LangChainTextGenerator
 from y_agents_plugins.plugins import (
     AgentTypeRegistry,
     HelloWorldAgent,
+    MasterOfPuppetsAgent,
     ModeratorAgent,
     PropagandaAgent,
 )
@@ -84,5 +85,6 @@ def build_default_registry() -> AgentTypeRegistry:
     registry = AgentTypeRegistry()
     registry.register(ModeratorAgent)
     registry.register(PropagandaAgent)
+    registry.register(MasterOfPuppetsAgent)
     registry.register(HelloWorldAgent)
     return registry

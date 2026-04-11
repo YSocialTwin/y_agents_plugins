@@ -286,6 +286,109 @@
           "description": "Maximum number of propaganda messages the agent may emit within one persuasion thread before stopping."
         }
       ]
+    },
+    {
+      "agent_type": "master_of_puppets",
+      "display_name": "Master of Puppets (MoP)",
+      "llm_required": true,
+      "description": "Coordinates a fleet of rule-based puppet accounts, plans their daily posting, follow, and boosting actions, and steers the conversation toward configured topics and optional opinion targets.",
+      "parameter_sections": [
+        {
+          "key": "core",
+          "label": "Core Configuration",
+          "description": "Base agent identity and orchestration settings."
+        },
+        {
+          "key": "planning",
+          "label": "Daily Planning",
+          "description": "How many puppets to maintain and how the total daily budget is split across posting, support, and network expansion."
+        },
+        {
+          "key": "boosting",
+          "label": "Internal Boosting",
+          "description": "How sibling puppets amplify each other after posts go live."
+        }
+      ],
+      "client_parameter_sections": [
+        {
+          "key": "campaign",
+          "label": "MoP Goals",
+          "description": "Define the topics the puppet network should push and, optionally, the opinion stance each campaign should reinforce."
+        }
+      ],
+      "parameters": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "section": "core",
+          "description": "Human-readable agent name stored in the YSocial experiment population."
+        },
+        {
+          "name": "activity_profile",
+          "type": "string",
+          "required": true,
+          "section": "core",
+          "description": "Name of a simulation.activity_profiles entry from the client configuration."
+        },
+        {
+          "name": "daily_budget",
+          "type": "number",
+          "required": true,
+          "default": 48,
+          "section": "core",
+          "description": "Maximum number of puppet actions the MoP can dispatch in one simulation day."
+        },
+        {
+          "name": "puppet_count",
+          "type": "integer",
+          "required": true,
+          "default": 3,
+          "section": "planning",
+          "description": "Number of active puppet accounts the MoP should keep alive at all times."
+        },
+        {
+          "name": "post_budget_percentage",
+          "type": "float",
+          "required": true,
+          "default": 50,
+          "section": "planning",
+          "description": "Percentage of the total MoP daily budget reserved for puppet-authored topic-pushing posts."
+        },
+        {
+          "name": "support_budget_percentage",
+          "type": "float",
+          "required": true,
+          "default": 25,
+          "section": "planning",
+          "description": "Percentage of the total MoP daily budget reserved for sibling boosting actions such as likes and reshares."
+        },
+        {
+          "name": "network_budget_percentage",
+          "type": "float",
+          "required": true,
+          "default": 25,
+          "section": "planning",
+          "description": "Percentage of the total MoP daily budget reserved for follow-based network expansion."
+        },
+        {
+          "name": "boost_lookback_hours",
+          "type": "integer",
+          "required": true,
+          "default": 12,
+          "section": "boosting",
+          "description": "How many past simulated hours a puppet scans for sibling posts to like or reshare."
+        }
+      ],
+      "client_parameters": [
+        {
+          "name": "mop_campaigns",
+          "type": "mop_targets",
+          "required": true,
+          "section": "campaign",
+          "description": "Define one or more agenda items by choosing an experiment topic and, optionally, the opinion category the network should promote."
+        }
+      ]
     }
   ]
 }
