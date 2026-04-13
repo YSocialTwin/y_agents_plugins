@@ -21,8 +21,25 @@ class PropagandaAgent(BaseAgentPlugin):
     )
 
     @staticmethod
-    def _normalize_target_tag(text: str, username: str) -> str:
+    def _sanitize_generated_social_text(text: str) -> str:
         cleaned = str(text or "").strip()
+        cleaned = re.sub(
+            r'^\s*(?:here(?:’|\'|)s|here is)\s+(?:a\s+)?(?:potential\s+)?(?:social-media\s+)?(?:post|reply)\s*:\s*',
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        ).strip()
+        if (
+            len(cleaned) >= 2
+            and cleaned[0] == cleaned[-1]
+            and cleaned[0] in {'"', "'"}
+        ):
+            cleaned = cleaned[1:-1].strip()
+        return cleaned
+
+    @staticmethod
+    def _normalize_target_tag(text: str, username: str) -> str:
+        cleaned = PropagandaAgent._sanitize_generated_social_text(text)
         if (
             len(cleaned) >= 2
             and cleaned[0] == cleaned[-1]
@@ -165,6 +182,7 @@ class PropagandaAgent(BaseAgentPlugin):
             action_type="CREATE_POST",
             payload={
                 "text": message,
+                "topic_ids": [int(candidate["campaign"]["runtime_topic_id"])],
                 "propaganda_activity": {
                     "target_uid": int(candidate["target_uid"]),
                     "topic_id": int(candidate["campaign"]["runtime_topic_id"]),
@@ -227,6 +245,7 @@ class PropagandaAgent(BaseAgentPlugin):
                 "parent_post_id": int(latest_target_reply.id),
                 "thread_id": int(active_thread["thread_id"]),
                 "text": message,
+                "topic_ids": [int(active_thread["topic_id"])],
                 "propaganda_activity": {
                     "target_uid": int(active_thread["target_uid"]),
                     "topic_id": int(active_thread["topic_id"]),
