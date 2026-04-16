@@ -8,6 +8,8 @@ nav:
   - Agent Types:
       - Overview: agent-types.md
       - Hello World Agent: hello-world-agent.md
+      - Stress Attacker: stress-attacker-agent.md
+      - Comic Relief Agent: comic-relief-agent.md
       - Moderator Agent: moderator-agent.md
       - Propaganda Agent: propaganda-agent.md
       - Master of Puppets: master-of-puppets-agent.md
