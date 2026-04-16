@@ -10,6 +10,7 @@ from y_agents_plugins.db import ExperimentDatabase
 from y_agents_plugins.plugins.master_of_puppets import MasterOfPuppetsAgent
 from y_agents_plugins.plugins.moderator import ModeratorAgent
 from y_agents_plugins.plugins.propaganda import PropagandaAgent
+from y_agents_plugins.plugins.stress_attacker import StressAttackerAgent
 from y_agents_plugins.plugins.hello_world import HelloWorldAgent
 from y_agents_plugins.runtime.executor import ActionExecutor
 
@@ -175,6 +176,46 @@ def test_executor_persists_post_action(tmp_path: Path) -> None:
     )
 
     assert count == 1
+    sa_connection.close()
+    connection.close()
+
+
+def test_hello_world_post_does_not_write_stress_reward(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    database.ensure_stress_reward_schema(sa_connection)
+    executor = ActionExecutor(
+        database,
+        stress_reward_config={"enabled": True, "backward_rounds": 24, "system": {}},
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=(),
+        recent_posts=(),
+        managed_agents=(),
+    )
+    agent = AgentSpec(
+        name="Hello One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="hello_world",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    action = AgentAction(
+        agent_type="hello_world",
+        action_type="CREATE_POST",
+        payload={"text": "HELLO WORLD"},
+    )
+
+    executor.execute(sa_connection, context=context, agent=agent, action=action)
+
+    assert database.count_rows(sa_connection, "stress_reward") == 0
     sa_connection.close()
     connection.close()
 
@@ -395,6 +436,79 @@ def test_executor_persists_moderation_action_and_updates_counts(tmp_path: Path) 
     connection.close()
 
 
+def test_executor_persists_stress_reward_for_moderation_target(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment')"
+    )
+    connection.execute(
+        "INSERT INTO post (id, tweet, user_id, round, moderated) VALUES (1, 'you are stupid', 2, 1, 0)"
+    )
+    connection.commit()
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    database.ensure_stress_reward_schema(sa_connection)
+    executor = ActionExecutor(
+        database,
+        stress_reward_config={"enabled": True, "backward_rounds": 24, "system": {}},
+    )
+    ModeratorAgent(
+        settings={
+            "toxicity_threshold": 0.5,
+            "moderation_time_span": 3,
+            "moderation_action_type": "one-fits-all",
+        }
+    ).setup_database(database, sa_connection)
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=5),
+        managed_agents=(),
+    )
+    agent = AgentSpec(
+        name="Moderator One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="moderator",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    action = AgentAction(
+        agent_type="moderator",
+        action_type="APPLY_MODERATION",
+        payload={
+            "post_id": 1,
+            "target_user_id": 2,
+            "reason": "one-fits-all",
+            "round_id": 1,
+            "message_type": "moderation",
+            "message_duration": 3,
+            "system_message_text": "Adjust your behavior.",
+            "stress_reward": {"outcome": "sanctioned", "action": "moderation:sanctioned"},
+        },
+    )
+
+    executor.execute(sa_connection, context=context, agent=agent, action=action)
+
+    rows = sa_connection.execute(
+        text(
+            "select uid, variable, type, action from stress_reward order by type asc, variable asc"
+        )
+    ).fetchall()
+    assert rows == [
+        (2, "reward", "aggregate", None),
+        (2, "stress", "aggregate", None),
+        (2, "reward", "variation", "moderation:sanctioned"),
+        (2, "stress", "variation", "moderation:sanctioned"),
+    ]
+    sa_connection.close()
+    connection.close()
+
+
 def test_moderator_can_generate_personalized_sys_message_and_persist_it(tmp_path: Path) -> None:
     db_path = tmp_path / "simulation.db"
     connection = _build_db(db_path)
@@ -487,8 +601,7 @@ def test_propaganda_agent_starts_thread_and_records_activity(tmp_path: Path) -> 
         is_available = True
 
         def invoke_text(self, *, system_prompt: str, user_prompt: str) -> str:
-            assert "propaganda" in system_prompt.lower()
-            assert "non-toxic" in system_prompt.lower()
+            assert system_prompt == "OPENING OVERRIDE"
             assert "avoid toxicity" in user_prompt.lower()
             assert "target_1" in user_prompt
             return '"target_1@ysocial.it you may be underestimating the benefits of climate action."'
@@ -513,6 +626,7 @@ def test_propaganda_agent_starts_thread_and_records_activity(tmp_path: Path) -> 
             ],
             "epsilon": 0.05,
             "max_interaction_rounds": 4,
+            "opening_llm_prompt_override": "OPENING OVERRIDE",
         },
         llm_client=StubLLM(),
     ).setup_database(database, sa_connection)
@@ -552,6 +666,7 @@ def test_propaganda_agent_starts_thread_and_records_activity(tmp_path: Path) -> 
             ],
             "epsilon": 0.05,
             "max_interaction_rounds": 4,
+            "opening_llm_prompt_override": "OPENING OVERRIDE",
         },
         llm_client=StubLLM(),
     )
@@ -582,6 +697,585 @@ def test_propaganda_agent_starts_thread_and_records_activity(tmp_path: Path) -> 
     assert post is not None
     assert post[1].startswith("@target_1 ")
     assert activity == (2, 1, 1, 1, 0.1, 1)
+    sa_connection.close()
+    connection.close()
+
+
+def test_executor_persists_stress_reward_for_directed_propaganda_post(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment')"
+    )
+    connection.commit()
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    database.ensure_stress_reward_schema(sa_connection)
+    executor = ActionExecutor(
+        database,
+        stress_reward_config={"enabled": True, "backward_rounds": 24, "system": {}},
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=(),
+        managed_agents=(),
+    )
+    agent = AgentSpec(
+        name="Propaganda One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="propaganda",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    action = AgentAction(
+        agent_type="propaganda",
+        action_type="CREATE_POST",
+        payload={
+            "text": "@target_1 Please reconsider this issue.",
+            "stress_reward": {"tone": "positive", "action": "post:positive", "target_user_id": 2},
+            "propaganda_activity": {
+                "target_uid": 2,
+                "topic_id": 1,
+                "target_opinion": 0.1,
+                "discussion_round_id": 1,
+            },
+        },
+    )
+
+    executor.execute(sa_connection, context=context, agent=agent, action=action)
+
+    rows = sa_connection.execute(
+        text("select uid, variable, type, action from stress_reward order by type asc, variable asc")
+    ).fetchall()
+    assert rows == [
+        (2, "reward", "aggregate", None),
+        (2, "stress", "aggregate", None),
+        (2, "reward", "variation", "post:positive"),
+        (2, "stress", "variation", "post:positive"),
+    ]
+    sa_connection.close()
+    connection.close()
+
+
+def test_stress_attacker_selects_target_and_emits_safe_synthetic_actions(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, age, leaning, interests) "
+        "VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 54, 'democrat', 'climate,education')"
+    )
+    connection.execute(
+        "INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment) "
+        "VALUES (1, 'A recent post', 2, -1, NULL, 1, -1, 0, 0)"
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    attacker = StressAttackerAgent(
+        settings={
+            "target_min_age": 50,
+            "target_max_age": 60,
+            "target_leaning": "democrat",
+            "negative_reactions_enabled": "enabled",
+            "critical_comment_enabled": "enabled",
+            "critical_comment_mode": "synthetic",
+            "critical_comment_text": "Please explain the weakest part of your reasoning.",
+            "report_burst_enabled": "enabled",
+            "source_count": 2,
+        }
+    )
+    attacker.setup_database(database, sa_connection)
+    agent = AgentSpec(
+        name="Stress One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="stress_attacker",
+        activity_profile="Always On",
+        daily_budget=12,
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=10),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+
+    actions = attacker.on_tick(context, agent)
+
+    assert [action.action_type for action in actions] == [
+        "READ",
+        "APPLY_STRESS_EVENT",
+        "CREATE_COMMENT",
+        "REPORT_POST",
+        "APPLY_STRESS_EVENT",
+    ]
+    assert actions[2].payload["text"] == (
+        "@target_1 Please explain the weakest part of your reasoning."
+    )
+    assert all(
+        action.payload.get("target_user_id") == 2
+        for action in actions[1:]
+        if "target_user_id" in action.payload
+    )
+    sa_connection.close()
+    connection.close()
+
+
+def test_stress_attacker_can_generate_llm_critical_comment(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, age, leaning, interests) "
+        "VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 54, 'democrat', 'climate,education')"
+    )
+    connection.execute(
+        "INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment) "
+        "VALUES (1, 'A recent post', 2, -1, NULL, 1, -1, 0, 0)"
+    )
+    connection.commit()
+
+    class StubLLM:
+        is_available = True
+
+        def invoke_text(self, *, system_prompt: str, user_prompt: str) -> str:
+            assert system_prompt == "OVERRIDE PROMPT"
+            assert "@target_1" in user_prompt
+            return "I don't see evidence for that conclusion."
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    attacker = StressAttackerAgent(
+        settings={
+            "target_filters": [{"feature": "leaning", "value": "democrat"}],
+            "negative_reactions_enabled": "disabled",
+            "critical_comment_enabled": "enabled",
+            "critical_comment_mode": "llm",
+            "report_burst_enabled": "disabled",
+            "llm_prompt_override": "OVERRIDE PROMPT",
+        },
+        llm_client=StubLLM(),
+    )
+    attacker.setup_database(database, sa_connection)
+    agent = AgentSpec(
+        name="Stress One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="stress_attacker",
+        activity_profile="Always On",
+        daily_budget=12,
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=10),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+
+    actions = attacker.on_tick(context, agent)
+
+    assert [action.action_type for action in actions] == ["READ", "CREATE_COMMENT"]
+    assert actions[1].payload["parent_post_id"] == 1
+    assert actions[1].payload["text"].startswith("@target_1 ")
+    assert actions[1].payload["stress_reward"]["tone"] == "critical"
+    sa_connection.close()
+    connection.close()
+
+
+def test_personalized_moderator_passes_prompt_customization_to_llm(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) "
+        "VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment')"
+    )
+    connection.execute(
+        "INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment) "
+        "VALUES (1, 'Problematic post', 2, -1, NULL, 1, -1, 0, 0)"
+    )
+    connection.execute(
+        "INSERT INTO post_toxicity (post_id, toxicity) VALUES (1, 0.9)"
+    )
+    connection.commit()
+
+    class StubLLM:
+        is_available = True
+
+        def invoke_text(self, *, system_prompt: str, user_prompt: str) -> str:
+            assert system_prompt == "CUSTOM MOD PROMPT"
+            return "Please adjust your behavior."
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    moderator = ModeratorAgent(
+        settings={
+            "toxicity_threshold": 0.8,
+            "moderation_time_span": 4,
+            "moderation_action_type": "personalized",
+            "candidate_window_rounds": 3,
+            "llm_prompt_override": "CUSTOM MOD PROMPT",
+        },
+        llm_client=StubLLM(),
+    )
+    moderator.setup_database(database, sa_connection)
+    agent = AgentSpec(
+        name="Moderator One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="moderator",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=10),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+
+    actions = moderator.on_tick(context, agent)
+
+    assert actions[1].payload["system_message_text"] == "Please adjust your behavior."
+    sa_connection.close()
+    connection.close()
+
+
+def test_executor_persists_llm_generated_stress_attacker_comment(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) "
+        "VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment')"
+    )
+    connection.execute(
+        "INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment) "
+        "VALUES (1, 'Target post', 2, -1, NULL, 1, -1, 0, 0)"
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    database.ensure_stress_reward_schema(sa_connection)
+    executor = ActionExecutor(
+        database,
+        stress_reward_config={"enabled": True, "backward_rounds": 24, "system": {}},
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=(),
+        managed_agents=(),
+    )
+    agent = AgentSpec(
+        name="Stress One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="stress_attacker",
+        activity_profile="Always On",
+        daily_budget=12,
+    )
+    action = AgentAction(
+        agent_type="stress_attacker",
+        action_type="CREATE_COMMENT",
+        payload={
+            "parent_post_id": 1,
+            "thread_id": 1,
+            "text": "@target_1 I don't think your argument is supported here.",
+            "stress_reward": {
+                "tone": "critical",
+                "action": "comment:critical",
+                "public_exposure": 1.0,
+            },
+        },
+    )
+
+    executor.execute(sa_connection, context=context, agent=agent, action=action)
+
+    comment = sa_connection.execute(
+        text("SELECT tweet, comment_to, thread_id FROM post WHERE id = 2")
+    ).fetchone()
+    stress_rows = sa_connection.execute(
+        text("SELECT variable, type, action FROM stress_reward ORDER BY type ASC, variable ASC")
+    ).fetchall()
+
+    assert comment == ("@target_1 I don't think your argument is supported here.", 1, 1)
+    assert ("stress", "variation", "comment:critical") in stress_rows
+    sa_connection.close()
+    connection.close()
+
+
+def test_executor_infers_comment_exposure_from_thread_size(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) "
+        "VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment')"
+    )
+    connection.executescript(
+        """
+        INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment)
+        VALUES (1, 'Root post', 2, -1, NULL, 1, -1, 0, 0);
+        INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment)
+        VALUES (2, 'Reply one', 2, 1, 1, 1, -1, 0, 0);
+        INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment)
+        VALUES (3, 'Reply two', 2, 1, 1, 1, -1, 0, 0);
+        """
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    database.ensure_stress_reward_schema(sa_connection)
+    executor = ActionExecutor(
+        database,
+        stress_reward_config={"enabled": True, "backward_rounds": 24, "system": {}},
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=(),
+        managed_agents=(),
+    )
+    agent = AgentSpec(
+        name="Stress One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="stress_attacker",
+        activity_profile="Always On",
+        daily_budget=12,
+    )
+    action = AgentAction(
+        agent_type="stress_attacker",
+        action_type="CREATE_COMMENT",
+        payload={
+            "parent_post_id": 2,
+            "thread_id": 1,
+            "text": "@target_1 Please clarify the weakest part of this argument.",
+            "stress_reward": {
+                "tone": "critical",
+                "action": "comment:critical",
+            },
+        },
+    )
+
+    executor.execute(sa_connection, context=context, agent=agent, action=action)
+
+    stress_value = sa_connection.execute(
+        text(
+            "SELECT value FROM stress_reward WHERE variable='stress' AND type='variation' AND action='comment:critical'"
+        )
+    ).scalar_one()
+
+    assert stress_value > 0.03
+    sa_connection.close()
+    connection.close()
+
+
+def test_executor_persists_synthetic_stress_attacker_events(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) "
+        "VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment')"
+    )
+    connection.execute(
+        "INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment) "
+        "VALUES (1, 'Target post', 2, -1, NULL, 1, -1, 0, 0)"
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    database.ensure_stress_reward_schema(sa_connection)
+    executor = ActionExecutor(
+        database,
+        stress_reward_config={"enabled": True, "backward_rounds": 24, "system": {}},
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=(),
+        managed_agents=(),
+    )
+    agent = AgentSpec(
+        name="Stress One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="stress_attacker",
+        activity_profile="Always On",
+        daily_budget=12,
+    )
+    actions = [
+        AgentAction(
+            agent_type="stress_attacker",
+            action_type="REPORT_POST",
+            payload={
+                "post_id": 1,
+                "target_user_id": 2,
+                "source_count": 3,
+                "action_name": "report:pressure",
+            },
+        ),
+        AgentAction(
+            agent_type="stress_attacker",
+            action_type="APPLY_STRESS_EVENT",
+            payload={
+                "target_user_id": 2,
+                "family": "report",
+                "subtype": "mass_report",
+                "action_name": "report:pressure",
+                "volume": 3,
+            },
+        ),
+    ]
+
+    for action in actions:
+        executor.execute(sa_connection, context=context, agent=agent, action=action)
+
+    reports_count = sa_connection.execute(text("SELECT COUNT(*) FROM reported")).scalar_one()
+    stress_rows = sa_connection.execute(
+        text("SELECT variable, type, action FROM stress_reward ORDER BY type ASC, variable ASC, action ASC")
+    ).fetchall()
+
+    assert reports_count == 3
+    assert ("stress", "variation", "report:pressure") in stress_rows
+    sa_connection.close()
+    connection.close()
+
+
+def test_moderator_one_fits_all_can_override_standard_message(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) "
+        "VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment')"
+    )
+    connection.execute(
+        "INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment) "
+        "VALUES (1, 'Problematic post', 2, -1, NULL, 1, -1, 0, 0)"
+    )
+    connection.execute(
+        "INSERT INTO post_toxicity (post_id, toxicity) VALUES (1, 0.9)"
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    moderator = ModeratorAgent(
+        settings={
+            "toxicity_threshold": 0.8,
+            "moderation_time_span": 4,
+            "moderation_action_type": "one-fits-all",
+            "candidate_window_rounds": 3,
+            "standard_message": "This content breaks the platform rules. Edit it before posting again.",
+        },
+    )
+    moderator.setup_database(database, sa_connection)
+    agent = AgentSpec(
+        name="Moderator One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="moderator",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=10),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+
+    actions = moderator.on_tick(context, agent)
+
+    assert actions[1].payload["system_message_text"] == (
+        "This content breaks the platform rules. Edit it before posting again."
+    )
+    sa_connection.close()
+    connection.close()
+
+
+def test_executor_skips_stress_reward_for_mop_puppet_targets(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) VALUES (2, 'mop_a', 'mop_a@example.org', 'secret', 'mop_puppet', 'mop_1')"
+    )
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) VALUES (3, 'mop_b', 'mop_b@example.org', 'secret', 'mop_puppet', 'mop_1')"
+    )
+    connection.execute(
+        "INSERT INTO post (id, tweet, user_id, round) VALUES (1, 'boost me', 2, 1)"
+    )
+    connection.commit()
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    database.ensure_stress_reward_schema(sa_connection)
+    executor = ActionExecutor(
+        database,
+        stress_reward_config={"enabled": True, "backward_rounds": 24, "system": {}},
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=5),
+        managed_agents=(),
+    )
+    agent = AgentSpec(
+        name="MoP",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="master_of_puppets",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    action = AgentAction(
+        agent_type="master_of_puppets",
+        action_type="REACT_POST",
+        payload={
+            "acting_username": "mop_b",
+            "post_id": 1,
+            "reaction_type": "like",
+            "stress_reward": {"action": "reaction:like"},
+        },
+    )
+
+    executor.execute(sa_connection, context=context, agent=agent, action=action)
+
+    assert database.count_rows(sa_connection, "stress_reward") == 0
     sa_connection.close()
     connection.close()
 
@@ -745,8 +1439,8 @@ def test_propaganda_agent_replies_and_tracks_updated_opinion(tmp_path: Path) -> 
         is_available = True
 
         def invoke_text(self, *, system_prompt: str, user_prompt: str) -> str:
+            assert system_prompt == "REPLY OVERRIDE"
             assert "observed opinion shift" in user_prompt.lower()
-            assert "non-toxic" in system_prompt.lower()
             assert "avoid toxicity" in user_prompt.lower()
             return "@target_1 consider how that evidence changes the climate trade-off."
 
@@ -770,6 +1464,7 @@ def test_propaganda_agent_replies_and_tracks_updated_opinion(tmp_path: Path) -> 
             ],
             "epsilon": 0.05,
             "max_interaction_rounds": 4,
+            "reply_llm_prompt_override": "REPLY OVERRIDE",
         },
         llm_client=StubLLM(),
     )

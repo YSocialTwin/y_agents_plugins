@@ -1,10 +1,25 @@
 from __future__ import annotations
 
 import re
+import uuid
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import MetaData, Table, create_engine, func, inspect, literal, select, text
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    Integer,
+    MetaData,
+    REAL,
+    String,
+    Table,
+    create_engine,
+    func,
+    inspect,
+    literal,
+    select,
+    text,
+)
 from sqlalchemy.engine import Connection, Engine, RowMapping
 from sqlalchemy.pool import NullPool
 
@@ -32,7 +47,9 @@ class ExperimentDatabase:
     def get_current_round(self, connection: Connection) -> SimulationRound:
         rounds = self.table("rounds")
         row = connection.execute(
-            select(rounds.c.id, rounds.c.day, rounds.c.hour).order_by(rounds.c.id.desc()).limit(1)
+            select(rounds.c.id, rounds.c.day, rounds.c.hour)
+            .order_by(rounds.c.day.desc(), rounds.c.hour.desc(), rounds.c.id.desc())
+            .limit(1)
         ).mappings().first()
         if row is None:
             raise RuntimeError("No rows found in rounds table")
@@ -44,7 +61,10 @@ class ExperimentDatabase:
         after_round_id: int | None,
     ) -> tuple[SimulationRound, ...]:
         rounds = self.table("rounds")
-        statement = select(rounds.c.id, rounds.c.day, rounds.c.hour).order_by(rounds.c.id.asc())
+        statement = (
+            select(rounds.c.id, rounds.c.day, rounds.c.hour)
+            .order_by(rounds.c.day.asc(), rounds.c.hour.asc(), rounds.c.id.asc())
+        )
         if after_round_id is None:
             rows = connection.execute(statement).mappings().all()
         else:
@@ -411,6 +431,36 @@ class ExperimentDatabase:
         connection.commit()
         return reaction_id
 
+    def create_report(
+        self,
+        connection: Connection,
+        *,
+        username: str,
+        post_id: int,
+        round_id: int,
+        report_type: str = "synthetic_pressure",
+        count: int = 1,
+    ) -> int:
+        if not self.has_table(connection, "reported"):
+            return 0
+        reported = self.table("reported")
+        user_id = self.get_user_id(connection, username)
+        written = 0
+        for _ in range(max(1, int(count))):
+            connection.execute(
+                reported.insert().values(
+                    type=str(report_type),
+                    to_uid=None,
+                    to_post=int(post_id),
+                    from_uid=int(user_id),
+                    tid=int(round_id),
+                )
+            )
+            written += 1
+        if written:
+            connection.commit()
+        return written
+
     def create_follow(
         self,
         connection: Connection,
@@ -501,6 +551,170 @@ class ExperimentDatabase:
         )
         connection.commit()
         return int(existing[0])
+
+    def ensure_stress_reward_schema(self, connection: Connection) -> None:
+        metadata = MetaData()
+        stress_reward = Table(
+            "stress_reward",
+            metadata,
+            Column("id", String(36), primary_key=True),
+            Column("uid", Integer, nullable=False),
+            Column("variable", String(32), nullable=False),
+            Column("value", REAL, nullable=False),
+            Column("type", String(32), nullable=False),
+            Column("action", String(64), nullable=True),
+            Column("tid", Integer, nullable=False),
+            CheckConstraint("variable IN ('stress', 'reward')", name="ck_stress_reward_variable"),
+            CheckConstraint("type IN ('aggregate', 'variation')", name="ck_stress_reward_type"),
+            CheckConstraint(
+                "(type = 'aggregate' AND value >= 0.0 AND value <= 1.0) OR "
+                "(type = 'variation' AND value >= -1.0 AND value <= 1.0)",
+                name="ck_stress_reward_value",
+            ),
+        )
+        if not self.has_table(connection, "stress_reward"):
+            stress_reward.create(connection, checkfirst=True)
+            connection.commit()
+            self._reflected_tables.pop("stress_reward", None)
+            return
+        columns = self._table_columns(connection, "stress_reward")
+        if "action" not in columns:
+            connection.execute(text("ALTER TABLE stress_reward ADD COLUMN action TEXT"))
+            connection.commit()
+            self._reflected_tables.pop("stress_reward", None)
+
+    def get_user_type(self, connection: Connection, user_id: int) -> str | None:
+        user_mgmt = self.table("user_mgmt")
+        row = connection.execute(
+            select(user_mgmt.c.user_type).where(user_mgmt.c.id == int(user_id)).limit(1)
+        ).first()
+        return None if row is None or row[0] is None else str(row[0])
+
+    def get_current_stress_reward(
+        self,
+        connection: Connection,
+        *,
+        user_id: int,
+        current_round_id: int,
+        backward_rounds: int = 24,
+    ) -> dict[str, float]:
+        if not self.has_table(connection, "stress_reward"):
+            return {"stress": 0.0, "reward": 0.0}
+        stress_reward = self.table("stress_reward")
+        current_round_id = int(current_round_id)
+        min_round_id = max(1, current_round_id - max(0, int(backward_rounds)))
+        payload: dict[str, float] = {"stress": 0.0, "reward": 0.0}
+        for variable in ("stress", "reward"):
+            exact = connection.execute(
+                select(stress_reward.c.value)
+                .where(stress_reward.c.uid == int(user_id))
+                .where(stress_reward.c.variable == variable)
+                .where(stress_reward.c.type == "aggregate")
+                .where(stress_reward.c.tid == current_round_id)
+                .limit(1)
+            ).first()
+            if exact is not None:
+                payload[variable] = _clamp01(exact[0])
+                continue
+
+            anchor_tid = min_round_id - 1
+            anchor_value = 0.0
+            anchor_row = connection.execute(
+                select(stress_reward.c.tid, stress_reward.c.value)
+                .where(stress_reward.c.uid == int(user_id))
+                .where(stress_reward.c.variable == variable)
+                .where(stress_reward.c.type == "aggregate")
+                .where(stress_reward.c.tid < current_round_id)
+                .order_by(stress_reward.c.tid.desc())
+                .limit(1)
+            ).first()
+            if anchor_row is not None:
+                anchor_tid = int(anchor_row[0])
+                anchor_value = float(anchor_row[1] or 0.0)
+
+            variation_sum = connection.execute(
+                select(func.coalesce(func.sum(stress_reward.c.value), 0.0))
+                .where(stress_reward.c.uid == int(user_id))
+                .where(stress_reward.c.variable == variable)
+                .where(stress_reward.c.type == "variation")
+                .where(stress_reward.c.tid > int(anchor_tid))
+                .where(stress_reward.c.tid <= current_round_id)
+            ).scalar()
+            payload[variable] = _clamp01(anchor_value + float(variation_sum or 0.0))
+        return payload
+
+    def set_stress_reward_variations(
+        self,
+        connection: Connection,
+        *,
+        user_id: int,
+        round_id: int,
+        variations: list[dict[str, Any]],
+        action_name: str | None = None,
+        aggregate_state: dict[str, float] | None = None,
+    ) -> int:
+        if not self.has_table(connection, "stress_reward"):
+            return 0
+        stress_reward = self.table("stress_reward")
+        written = 0
+        for variation in variations or []:
+            variable = str((variation or {}).get("variable") or "").strip().lower()
+            if variable not in {"stress", "reward"}:
+                continue
+            try:
+                value = float((variation or {}).get("value"))
+            except (TypeError, ValueError):
+                continue
+            if value < -1.0 or value > 1.0:
+                continue
+            connection.execute(
+                stress_reward.insert().values(
+                    id=str(uuid.uuid4()),
+                    uid=int(user_id),
+                    variable=variable,
+                    value=value,
+                    type="variation",
+                    action=(str(action_name).strip() if action_name else None),
+                    tid=int(round_id),
+                )
+            )
+            written += 1
+
+        if isinstance(aggregate_state, dict):
+            for variable in ("stress", "reward"):
+                if variable not in aggregate_state:
+                    continue
+                current_value = _clamp01(aggregate_state.get(variable))
+                existing = connection.execute(
+                    select(stress_reward.c.id)
+                    .where(stress_reward.c.uid == int(user_id))
+                    .where(stress_reward.c.variable == variable)
+                    .where(stress_reward.c.type == "aggregate")
+                    .where(stress_reward.c.tid == int(round_id))
+                    .limit(1)
+                ).first()
+                if existing is None:
+                    connection.execute(
+                        stress_reward.insert().values(
+                            id=str(uuid.uuid4()),
+                            uid=int(user_id),
+                            variable=variable,
+                            value=current_value,
+                            type="aggregate",
+                            action=None,
+                            tid=int(round_id),
+                        )
+                    )
+                else:
+                    connection.execute(
+                        stress_reward.update()
+                        .where(stress_reward.c.id == existing[0])
+                        .values(value=current_value)
+                    )
+
+        if written or isinstance(aggregate_state, dict):
+            connection.commit()
+        return written
 
     def _insert_mentions_for_text(
         self,
@@ -1270,6 +1484,21 @@ class ExperimentDatabase:
             raise RuntimeError(f"Post '{post_id}' not found in post table")
         return int(row[0])
 
+    def get_thread_post_count_for_post(
+        self,
+        connection: Connection,
+        *,
+        post_id: int,
+    ) -> int:
+        post = self.table("post")
+        row = connection.execute(
+            select(post.c.id, post.c.thread_id).where(post.c.id == int(post_id)).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise RuntimeError(f"Post '{post_id}' not found in post table")
+        thread_id = _nullable_int(row["thread_id"]) or int(row["id"])
+        return len(self.get_thread_posts(connection, thread_id=int(thread_id), limit=500))
+
     def count_rows(self, connection: Connection, table_name: str) -> int:
         table = self.table(table_name)
         row = connection.execute(select(func.count()).select_from(table)).first()
@@ -1344,3 +1573,10 @@ def _nullable_int(value: object) -> int | None:
         return None
     numeric = int(value)
     return None if numeric < 0 else numeric
+
+
+def _clamp01(value: Any) -> float:
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except Exception:
+        return 0.0

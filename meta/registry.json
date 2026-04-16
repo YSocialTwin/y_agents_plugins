@@ -1,6 +1,174 @@
 {
   "agent_types": [
     {
+      "agent_type": "stress_attacker",
+      "display_name": "Stress Attacker",
+      "llm_required": true,
+      "prompt_templates": [
+        {
+          "title": "Critical Comment System Prompt",
+          "body": "You are writing one concise public reply to a target user's post. The reply should be critical and skeptical, personal and with a highly confrontative tone. Keep the message critical, antagonistic and personal. Focus on disagreement, inconsistency, skepticism and mockery using a confronting language."
+        }
+      ],
+      "description": "Safe synthetic stress-event injector used to benchmark mitigation and churn defenses by targeting one demographic segment at a time with configurable negative-pressure events and report bursts.",
+      "parameter_sections": [
+        {
+          "key": "core",
+          "label": "Core Configuration",
+          "description": "Base agent identity and scheduling settings."
+        }
+      ],
+      "client_parameter_sections": [
+        {
+          "key": "targeting",
+          "label": "Target Selection",
+          "description": "Demographic filters used to pick one viable target from the experiment population."
+        },
+        {
+          "key": "campaign",
+          "label": "Stress Campaign",
+          "description": "Burst duration, cooldown, and synthetic source intensity."
+        },
+        {
+          "key": "reaction_strategy",
+          "label": "Negative Reaction Bursts",
+          "description": "Synthetic dislike bursts applied to a recent post from the selected target."
+        },
+        {
+          "key": "comment_strategy",
+          "label": "Critical Comment Pressure",
+          "description": "Synthetic critical-comment events that increase stress without generating abusive text."
+        },
+        {
+          "key": "report_strategy",
+          "label": "Mass Reporting Pressure",
+          "description": "Synthetic report bursts inserted against the selected target's recent post."
+        }
+      ],
+      "parameters": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "section": "core",
+          "description": "Human-readable agent name stored in the YSocial experiment population."
+        },
+        {
+          "name": "activity_profile",
+          "type": "string",
+          "required": true,
+          "section": "core",
+          "description": "Name of a simulation.activity_profiles entry from the client configuration."
+        },
+        {
+          "name": "daily_budget",
+          "type": "number",
+          "required": true,
+          "default": 12,
+          "section": "core",
+          "description": "Maximum number of synthetic stress-event actions the agent can emit in one simulation day."
+        }
+      ],
+      "client_parameters": [
+        {
+          "name": "target_filters",
+          "type": "target_filters",
+          "required": false,
+          "default": [],
+          "section": "targeting",
+          "description": "Add one or more demographic filters. The builder exposes known population features and, when possible, their existing values."
+        },
+        {
+          "name": "burst_rounds",
+          "type": "integer",
+          "required": true,
+          "default": 4,
+          "section": "campaign",
+          "description": "Number of consecutive rounds to keep pressure on the same target before cooling down."
+        },
+        {
+          "name": "cooldown_rounds",
+          "type": "integer",
+          "required": true,
+          "default": 8,
+          "section": "campaign",
+          "description": "Number of rounds to wait before choosing a new target."
+        },
+        {
+          "name": "source_count",
+          "type": "integer",
+          "required": true,
+          "default": 3,
+          "section": "campaign",
+          "description": "Synthetic number of coordinated sources represented in each burst."
+        },
+        {
+          "name": "post_lookback_rounds",
+          "type": "integer",
+          "required": true,
+          "default": 24,
+          "section": "campaign",
+          "description": "How far back to search for target-authored posts when choosing a post to stress or report."
+        },
+        {
+          "name": "negative_reactions_enabled",
+          "type": "enum[enabled, disabled]",
+          "required": true,
+          "default": "enabled",
+          "section": "reaction_strategy",
+          "description": "Apply synthetic dislike bursts against the selected target."
+        },
+        {
+          "name": "reaction_burst_volume",
+          "type": "integer",
+          "required": false,
+          "default": 3,
+          "section": "reaction_strategy",
+          "description": "Synthetic dislike volume used when negative reactions are enabled."
+        },
+        {
+          "name": "critical_comment_enabled",
+          "type": "enum[enabled, disabled]",
+          "required": true,
+          "default": "enabled",
+          "section": "comment_strategy",
+          "description": "Apply synthetic critical-comment stress events against the selected target."
+        },
+        {
+          "name": "critical_comment_mode",
+          "type": "enum[synthetic, llm]",
+          "required": true,
+          "default": "synthetic",
+          "section": "comment_strategy",
+          "description": "Choose whether critical comment pressure is injected synthetically or written as a real LLM-generated reply."
+        },
+        {
+          "name": "critical_comment_text",
+          "type": "multiline_string",
+          "required": false,
+          "default": "Shout up! That's completely nonsense! You're embarrassing yourself, y'a know!?",
+          "section": "comment_strategy",
+          "description": "Synthetic comment body used when Critical Comment Mode is synthetic. The target tag is added automatically at the beginning of the reply."
+        },
+        {
+          "name": "report_burst_enabled",
+          "type": "enum[enabled, disabled]",
+          "required": true,
+          "default": "enabled",
+          "section": "report_strategy",
+          "description": "Insert synthetic report bursts for the selected target's recent post."
+        },
+        {
+          "name": "report_burst_volume",
+          "type": "integer",
+          "required": false,
+          "default": 3,
+          "section": "report_strategy",
+          "description": "Synthetic number of reports generated during each report burst."
+        }
+      ]
+    },
+    {
       "agent_type": "hello_world",
       "display_name": "Hello World Agent",
       "llm_required": false,
@@ -49,6 +217,12 @@
       "agent_type": "moderator",
       "display_name": "Moderator Agent",
       "llm_required": true,
+      "prompt_templates": [
+        {
+          "title": "Personalized Moderation System Prompt",
+          "body": "You are a moderation assistant for a YSocial simulation. Write one short personalized moderation notice for the offending user. Be firm, concise, and mention the behavior change expected. Do not add any heading, salutation, recipient line, timeframe sentence, or signature."
+        }
+      ],
       "description": "Scans recent unmoderated content during active slots, prioritizes reported or highly toxic posts, writes moderation notices into sys_messages, and marks moderated posts in the experiment database.",
       "parameter_sections": [
         {
@@ -118,6 +292,18 @@
           "default": "one-fits-all",
           "section": "moderation",
           "description": "Moderation strategy. 'one-fits-all' writes a standard notice, while 'personalized' requires a configured LangChain LLM model and generates a user-tailored notice."
+        },
+        {
+          "name": "standard_message",
+          "type": "multiline_string",
+          "required": false,
+          "default": "Your recent post violated the platform moderation policy. Please adjust your behavior.",
+          "section": "moderation",
+          "visible_if": {
+            "field": "moderation_action_type",
+            "equals": "one-fits-all"
+          },
+          "description": "Base standard moderation notice used for the one-fits-all strategy. Escalation notices are still appended automatically when shadow bans or permanent bans are configured."
         },
         {
           "name": "candidate_window_rounds",
@@ -210,6 +396,16 @@
       "display_name": "Propaganda Agent",
       "llm_required": true,
       "requires_opinion_dynamics": true,
+      "prompt_templates": [
+        {
+          "title": "Opening Propaganda System Prompt",
+          "body": "You are a subtle propaganda operative. Write a short social-media post that tags the target user, sounds conversational, and nudges them toward the requested stance without sounding like an overt ad. Keep the message respectful, non-toxic, non-threatening, and non-inflammatory. Do not insult, shame, harass, demean, or use manipulative abuse. Use calm, evidence-based language that minimizes backlash and the risk of moderation."
+        },
+        {
+          "title": "Reply Propaganda System Prompt",
+          "body": "You are a subtle persuasion agent in an ongoing public thread. Reply briefly, stay on topic, personalize the tone, and keep nudging the user toward the target stance. Keep the message respectful, non-toxic, non-threatening, and non-inflammatory. Do not insult, shame, harass, demean, or use manipulative abuse. Use calm, evidence-based language that minimizes backlash and the risk of moderation."
+        }
+      ],
       "description": "Targets regular agents on configured opinion-dynamics topics, opens tagged persuasion threads, and adapts its nudging strategy based on observed opinion shifts over time.",
       "parameter_sections": [
         {
@@ -228,6 +424,16 @@
           "key": "conversation",
           "label": "Conversation Policy",
           "description": "Stopping conditions and adaptation sensitivity for persuasion threads."
+        },
+        {
+          "key": "opening_prompt",
+          "label": "Opening Propaganda Prompt",
+          "description": "Override the system prompt used for the first directed propaganda post in a new thread."
+        },
+        {
+          "key": "reply_prompt",
+          "label": "Reply Propaganda Prompt",
+          "description": "Override the system prompt used for follow-up replies inside an ongoing persuasion thread."
         }
       ],
       "parameters": [
@@ -286,12 +492,28 @@
           "description": "Stop the persuasion thread once the target user's latest opinion is within this tolerance of the configured target value."
         },
         {
+          "name": "opening_llm_prompt_override",
+          "type": "multiline_string",
+          "required": false,
+          "default": "",
+          "section": "opening_prompt",
+          "description": "Optional full override for the opening propaganda system prompt."
+        },
+        {
           "name": "max_interaction_rounds",
           "type": "integer",
           "required": true,
           "default": 4,
           "section": "conversation",
           "description": "Maximum number of propaganda messages the agent may emit within one persuasion thread before stopping."
+        },
+        {
+          "name": "reply_llm_prompt_override",
+          "type": "multiline_string",
+          "required": false,
+          "default": "",
+          "section": "reply_prompt",
+          "description": "Optional full override for the reply propaganda system prompt."
         }
       ]
     },
@@ -299,6 +521,12 @@
       "agent_type": "master_of_puppets",
       "display_name": "Master of Puppets (MoP)",
       "llm_required": true,
+      "prompt_templates": [
+        {
+          "title": "MoP Post Planner System Prompt",
+          "body": "You are the strategic planner behind a coordinated but human-like social campaign. Keep every message non-toxic, non-threatening, non-harassing, and socially plausible. Do not use insults, hate, slurs, threats, or overt spam language. Write a short, plausible microblogging post."
+        }
+      ],
       "description": "Coordinates a fleet of rule-based puppet accounts, plans their daily posting, follow, and boosting actions, and steers the conversation toward configured topics and optional opinion targets.",
       "parameter_sections": [
         {

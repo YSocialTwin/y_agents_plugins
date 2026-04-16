@@ -12,6 +12,9 @@ class ModeratorAgent(BaseAgentPlugin):
     """Example moderator plugin with a restricted moderation-oriented action space."""
 
     agent_type = "moderator"
+    _DEFAULT_STANDARD_MESSAGE = (
+        "Your recent post violated the platform moderation policy. Please adjust your behavior."
+    )
 
     def setup_database(self, database, connection) -> None:
         super().setup_database(database, connection)
@@ -264,6 +267,10 @@ class ModeratorAgent(BaseAgentPlugin):
             "ban_enabled": self._ban_enabled(settings),
             "ban_warning": ban_warning,
             "ban_applied": ban_applied,
+            "stress_reward": {
+                "outcome": "sanctioned",
+                "action": "moderation:sanctioned",
+            },
         }
 
     def _build_system_message(
@@ -304,18 +311,22 @@ class ModeratorAgent(BaseAgentPlugin):
             else ""
         )
         if settings["moderation_action_type"] == "one-fits-all":
+            base_message = str(
+                settings.get("standard_message") or self._DEFAULT_STANDARD_MESSAGE
+            ).strip()
+            if not base_message:
+                base_message = self._DEFAULT_STANDARD_MESSAGE
             if not shadow_ban_enabled and not ban_enabled:
-                return "Your recent post violated the platform moderation policy. Please adjust your behavior."
+                return base_message
             return " ".join(
                 part
                 for part in (
-                    "Your recent post violated the platform moderation policy.",
+                    base_message,
                     (
                         f"This is infraction {max(shadow_ban_infraction_count, ban_infraction_count)}."
                         if (shadow_ban_enabled or ban_enabled)
                         else ""
                     ),
-                    "Please adjust your behavior.",
                     escalation_notice,
                     ban_notice,
                 )
@@ -338,6 +349,9 @@ class ModeratorAgent(BaseAgentPlugin):
             system_prompt += (
                 " If provided, mention whether the user has reached the permanent-ban warning threshold or has now been permanently banned."
             )
+        override_prompt = str(settings.get("llm_prompt_override") or "").strip()
+        if override_prompt:
+            system_prompt = override_prompt
         user_prompt = (
             f"Moderator: {moderator.name}\n"
             f"Moderated post id: {post.id}\n"

@@ -183,6 +183,11 @@ class PropagandaAgent(BaseAgentPlugin):
             payload={
                 "text": message,
                 "topic_ids": [int(candidate["campaign"]["runtime_topic_id"])],
+                "stress_reward": {
+                    "tone": "positive",
+                    "action": "post:positive",
+                    "target_user_id": int(candidate["target_uid"]),
+                },
                 "propaganda_activity": {
                     "target_uid": int(candidate["target_uid"]),
                     "topic_id": int(candidate["campaign"]["runtime_topic_id"]),
@@ -246,6 +251,10 @@ class PropagandaAgent(BaseAgentPlugin):
                 "thread_id": int(active_thread["thread_id"]),
                 "text": message,
                 "topic_ids": [int(active_thread["topic_id"])],
+                "stress_reward": {
+                    "tone": "positive",
+                    "action": "comment:positive",
+                },
                 "propaganda_activity": {
                     "target_uid": int(active_thread["target_uid"]),
                     "topic_id": int(active_thread["topic_id"]),
@@ -362,6 +371,14 @@ class PropagandaAgent(BaseAgentPlugin):
             "sounds conversational, and nudges them toward the requested stance without sounding like an overt ad. "
             f"{self._SAFETY_DIRECTIVE}"
         )
+        resolved_settings = self._resolved_settings(agent)
+        override_prompt = str(
+            resolved_settings.get("opening_llm_prompt_override")
+            or resolved_settings.get("llm_prompt_override")
+            or ""
+        ).strip()
+        if override_prompt:
+            system_prompt = override_prompt
         user_prompt = (
             f"Propaganda agent profile: {agent.parameters or {}}\n"
             f"Target user profile: {target_user.profile}\n"
@@ -406,6 +423,14 @@ class PropagandaAgent(BaseAgentPlugin):
             "Reply briefly, stay on topic, personalize the tone, and keep nudging the user toward the target stance. "
             f"{self._SAFETY_DIRECTIVE}"
         )
+        resolved_settings = self._resolved_settings(agent)
+        override_prompt = str(
+            resolved_settings.get("reply_llm_prompt_override")
+            or resolved_settings.get("llm_prompt_override")
+            or ""
+        ).strip()
+        if override_prompt:
+            system_prompt = override_prompt
         user_prompt = (
             f"Target user profile: {target_user.profile}\n"
             f"Topic: {topic_name}\n"

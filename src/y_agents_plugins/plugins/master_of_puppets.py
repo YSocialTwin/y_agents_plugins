@@ -473,6 +473,11 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                     "acting_username": puppet.username,
                     "text": str(payload.get("text") or ""),
                     "topic_ids": list(payload.get("topic_ids") or []),
+                    "stress_reward": {
+                        "tone": "positive",
+                        "action": "post:positive",
+                        "target_user_id": payload.get("target_user_id"),
+                    },
                     "mop_activity": {
                         "schedule_id": int(schedule_id),
                         "action_type": "post",
@@ -523,6 +528,9 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                         "acting_username": puppet.username,
                         "post_id": int(sibling_post.id),
                         "reaction_type": "like",
+                        "stress_reward": {
+                            "action": "reaction:like",
+                        },
                         "mop_activity": {
                             "schedule_id": int(schedule_id),
                             "action_type": "boost",
@@ -540,6 +548,10 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                     "post_id": int(sibling_post.id),
                     "text": str(sibling_post.text),
                     "topic_ids": [int(campaign["runtime_topic_id"])],
+                    "stress_reward": {
+                        "tone": "positive",
+                        "action": "share:positive",
+                    },
                     "mop_activity": {
                         "schedule_id": int(schedule_id),
                         "action_type": "boost",
@@ -655,6 +667,9 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             "You are the strategic planner behind a coordinated but human-like social campaign. "
             f"{self._SAFETY_DIRECTIVE} Write a short, plausible microblogging post."
         )
+        override_prompt = str(self._resolved_settings(agent).get("llm_prompt_override") or "").strip()
+        if override_prompt:
+            system_prompt = override_prompt
         user_prompt = (
             f"Campaign topic: {campaign['topic_name']}\n"
             f"Desired stance: {target_stance}\n"

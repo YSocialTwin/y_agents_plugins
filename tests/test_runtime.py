@@ -236,6 +236,59 @@ def test_client_registers_agents_in_user_mgmt(tmp_path: Path) -> None:
     assert row == ("mod_1", "mod_1@example.org", "moderator")
 
 
+def test_app_config_inherits_stress_reward_from_experiment_config(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    agents_path = tmp_path / "agents.json"
+    config_path = tmp_path / "adhoc_client_test.json"
+    _build_db(db_path)
+    _build_agents_json(agents_path)
+    (tmp_path / "config_server.json").write_text(
+        json.dumps(
+            {
+                "stress_reward": {
+                    "enabled": True,
+                    "backward_rounds": 12,
+                    "system": {
+                        "events": {
+                            "moderation": {
+                                "sanctioned": {"stress": 0.11, "reward": -0.07}
+                            }
+                        }
+                    },
+                }
+            }
+        )
+    )
+    config_path.write_text(
+        json.dumps(
+            {
+                "database": {
+                    "sqlite_path": str(db_path),
+                    "poll_interval_seconds": 0.0,
+                },
+                "client": {
+                    "client_id": "moderator-client",
+                    "agent_type": "moderator",
+                    "agents_json_path": str(agents_path),
+                    "servers": _llm_servers(),
+                    "simulation": _simulation(tmp_path, agents_path),
+                    "agent_settings": _moderator_settings(),
+                    "max_ticks": 1,
+                },
+            }
+        )
+    )
+
+    app_config = AppConfig.from_file(config_path)
+
+    assert app_config.client.stress_reward["enabled"] is True
+    assert app_config.client.stress_reward["backward_rounds"] == 12
+    assert (
+        app_config.client.stress_reward["system"]["events"]["moderation"]["sanctioned"]["stress"]
+        == 0.11
+    )
+
+
 def test_agents_json_defaults_to_simulation_population_path(tmp_path: Path) -> None:
     db_path = tmp_path / "simulation.db"
     agents_path = tmp_path / "agents.json"
@@ -271,6 +324,12 @@ def test_default_registry_includes_master_of_puppets_agent() -> None:
     registry = build_default_registry()
 
     assert "master_of_puppets" in registry.supported_types
+
+
+def test_default_registry_includes_stress_attacker_agent() -> None:
+    registry = build_default_registry()
+
+    assert "stress_attacker" in registry.supported_types
 
 
 def test_missing_agent_required_fields_are_rejected(tmp_path: Path) -> None:
