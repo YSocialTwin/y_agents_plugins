@@ -10,6 +10,7 @@ from y_agents_plugins.db import ExperimentDatabase
 from y_agents_plugins.plugins.master_of_puppets import MasterOfPuppetsAgent
 from y_agents_plugins.plugins.moderator import ModeratorAgent
 from y_agents_plugins.plugins.propaganda import PropagandaAgent
+from y_agents_plugins.plugins.comic_relief import ComicReliefAgent
 from y_agents_plugins.plugins.stress_attacker import StressAttackerAgent
 from y_agents_plugins.plugins.hello_world import HelloWorldAgent
 from y_agents_plugins.runtime.executor import ActionExecutor
@@ -1518,6 +1519,132 @@ def test_propaganda_agent_replies_and_tracks_updated_opinion(tmp_path: Path) -> 
     assert "@target_1" in reply[0]
     assert reply[1:] == (2, 1)
     assert activity == (2, 1, 2, 0.35, 1)
+    sa_connection.close()
+    connection.close()
+
+
+def test_comic_relief_agent_generates_tagged_post_with_opening_override(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age, leaning) "
+        "VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 'science,climate', 30, 'democrat')"
+    )
+    connection.execute(
+        "INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment) "
+        "VALUES (1, 'I am trying to explain renewable energy policy.', 2, -1, NULL, 1, -1, 0, 0)"
+    )
+    connection.commit()
+
+    class StubLLM:
+        is_available = True
+
+        def invoke_text(self, *, system_prompt: str, user_prompt: str) -> str:
+            assert system_prompt == "OPENING COMIC OVERRIDE"
+            assert "dad_jokes" in user_prompt
+            assert "science_geek" in user_prompt
+            assert "renewable energy policy" in user_prompt
+            return "@target_1 That policy thread has the energy of a solar panel trying stand-up."
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    comic = ComicReliefAgent(
+        settings={
+            "humor_styles": ["dad_jokes", "science_geek"],
+            "delivery_mode": "post_only",
+            "post_lookback_rounds": 24,
+            "opening_llm_prompt_override": "OPENING COMIC OVERRIDE",
+        },
+        llm_client=StubLLM(),
+    )
+    comic.setup_database(database, sa_connection)
+    agent = AgentSpec(
+        name="Comic One",
+        username="comic_1",
+        email="comic_1@example.org",
+        password="secret",
+        agent_type="comic_relief",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="comic-client",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=10),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+
+    actions = comic.on_tick(context, agent)
+
+    assert [action.action_type for action in actions] == ["READ", "CREATE_POST"]
+    assert actions[1].payload["text"].startswith("@target_1 ")
+    assert actions[1].payload["stress_reward"]["action"] == "post:supportive"
+    sa_connection.close()
+    connection.close()
+
+
+def test_comic_relief_agent_generates_tagged_comment_with_reply_override(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age, leaning) "
+        "VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 'gaming,fantasy', 28, 'neutral')"
+    )
+    connection.execute(
+        "INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment) "
+        "VALUES (1, 'My dragon build keeps collapsing at the final boss.', 2, -1, NULL, 2, -1, 0, 0)"
+    )
+    connection.commit()
+
+    class StubLLM:
+        is_available = True
+
+        def invoke_text(self, *, system_prompt: str, user_prompt: str) -> str:
+            assert system_prompt == "REPLY COMIC OVERRIDE"
+            assert "fantasy_gaming" in user_prompt
+            assert "dragon build" in user_prompt
+            return "Your dragon build sounds like it respecced into interpretive dance."
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    comic = ComicReliefAgent(
+        settings={
+            "humor_styles": ["fantasy_gaming"],
+            "delivery_mode": "comment_only",
+            "post_lookback_rounds": 24,
+            "reply_llm_prompt_override": "REPLY COMIC OVERRIDE",
+        },
+        llm_client=StubLLM(),
+    )
+    comic.setup_database(database, sa_connection)
+    agent = AgentSpec(
+        name="Comic One",
+        username="comic_1",
+        email="comic_1@example.org",
+        password="secret",
+        agent_type="comic_relief",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="comic-client",
+        current_round=SimulationRound(id=2, day=0, slot=1),
+        previous_round=SimulationRound(id=1, day=0, slot=0),
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=2, limit=10),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+
+    actions = comic.on_tick(context, agent)
+
+    assert [action.action_type for action in actions] == ["READ", "CREATE_COMMENT"]
+    assert actions[1].payload["parent_post_id"] == 1
+    assert actions[1].payload["text"].startswith("@target_1 ")
+    assert actions[1].payload["stress_reward"]["action"] == "comment:supportive"
     sa_connection.close()
     connection.close()
 

@@ -253,6 +253,9 @@ class StressAttackerAgent(BaseAgentPlugin):
         target_filters = list(settings.get("target_filters") or [])
         if not target_filters:
             target_filters = self._legacy_target_filters(settings)
+        interests_value = str(profile.get("interests") or "")
+        custom_features = profile.get("custom_features") or {}
+        stubborn_topics = profile.get("stubborn_topics") or {}
         for entry in target_filters:
             if not isinstance(entry, dict):
                 continue
@@ -272,12 +275,32 @@ class StressAttackerAgent(BaseAgentPlugin):
                 if str(profile.get("language") or "").strip().casefold() != str(value or "").strip().casefold():
                     return False
                 continue
+            if feature == "gender":
+                if str(profile.get("gender") or "").strip().casefold() != str(value or "").strip().casefold():
+                    return False
+                continue
+            if feature == "nationality":
+                if str(profile.get("nationality") or "").strip().casefold() != str(value or "").strip().casefold():
+                    return False
+                continue
             if feature == "education_level":
                 if str(profile.get("education_level") or "").strip().casefold() != str(value or "").strip().casefold():
                     return False
                 continue
+            if feature == "profession":
+                if str(profile.get("profession") or "").strip().casefold() != str(value or "").strip().casefold():
+                    return False
+                continue
+            if feature == "topic":
+                normalized_value = str(value or "").strip().casefold()
+                if (
+                    normalized_value not in interests_value.casefold()
+                    and all(str(key).strip().casefold() != normalized_value for key in stubborn_topics.keys())
+                    and all(str(key).strip().casefold() != normalized_value for key in custom_features.keys())
+                ):
+                    return False
+                continue
             if feature == "interest_contains":
-                interests_value = str(profile.get("interests") or "")
                 if str(value or "").strip().casefold() not in interests_value.casefold():
                     return False
                 continue
@@ -293,7 +316,6 @@ class StressAttackerAgent(BaseAgentPlugin):
                 continue
             if feature.startswith("custom:"):
                 key = feature.split(":", 1)[1]
-                custom_features = profile.get("custom_features") or {}
                 if str(custom_features.get(key) or "").strip().casefold() != str(value or "").strip().casefold():
                     return False
         return True

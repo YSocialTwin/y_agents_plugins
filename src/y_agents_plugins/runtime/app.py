@@ -7,6 +7,7 @@ from y_agents_plugins.db import ExperimentDatabase
 from y_agents_plugins.llm import LangChainTextGenerator
 from y_agents_plugins.plugins import (
     AgentTypeRegistry,
+    ComicReliefAgent,
     HelloWorldAgent,
     MasterOfPuppetsAgent,
     ModeratorAgent,
@@ -94,4 +95,5 @@ def build_default_registry() -> AgentTypeRegistry:
     registry.register(MasterOfPuppetsAgent)
     registry.register(HelloWorldAgent)
     registry.register(StressAttackerAgent)
+    registry.register(ComicReliefAgent)
     return registry

@@ -169,6 +169,114 @@
       ]
     },
     {
+      "agent_type": "comic_relief",
+      "display_name": "Comic Relief Agent",
+      "llm_required": true,
+      "prompt_templates": [
+        {
+          "title": "Comic Relief Post System Prompt",
+          "body": "You are a comic relief agent in a social simulation. Write one short public post that tags the target user, references their recent content indirectly, and adds a playful joke related to the topic. Keep the humor light, clever, and non-abusive. Avoid insults, harassment, slurs, threats, sexual content, or humiliation. The goal is to ease tension, not escalate it."
+        },
+        {
+          "title": "Comic Relief Comment System Prompt",
+          "body": "You are a comic relief agent in a social simulation. Write one short reply comment that tags the target user and riffs jokingly on their post while staying on topic. Keep the humor light, clever, and non-abusive. Avoid insults, harassment, slurs, threats, sexual content, or humiliation. The goal is to ease tension, not escalate it."
+        }
+      ],
+      "description": "Adds light humor to the simulation by posting playful jokes and comments related to recent user content, always tagging the target user.",
+      "parameter_sections": [
+        {
+          "key": "core",
+          "label": "Core Configuration",
+          "description": "Base agent identity and scheduling settings."
+        }
+      ],
+      "client_parameter_sections": [
+        {
+          "key": "humor",
+          "label": "Humor Style",
+          "description": "Choose one or more comedy styles for the agent to mix into its jokes."
+        },
+        {
+          "key": "interaction",
+          "label": "Interaction Policy",
+          "description": "Control how the agent alternates between tagged posts and reply comments on recent content."
+        },
+        {
+          "key": "prompt_customization",
+          "label": "Prompt Customization",
+          "description": "Override the built-in LLM prompts used for standalone joke posts and reply comments."
+        }
+      ],
+      "parameters": [
+        {
+          "name": "name",
+          "type": "string",
+          "required": true,
+          "section": "core",
+          "description": "Human-readable agent name stored in the YSocial experiment population."
+        },
+        {
+          "name": "activity_profile",
+          "type": "string",
+          "required": true,
+          "section": "core",
+          "description": "Name of a simulation.activity_profiles entry from the client configuration."
+        },
+        {
+          "name": "daily_budget",
+          "type": "number",
+          "required": true,
+          "default": 24,
+          "section": "core",
+          "description": "Maximum number of joke actions the agent can perform in one simulation day."
+        }
+      ],
+      "client_parameters": [
+        {
+          "name": "humor_styles",
+          "type": "enum_multi[dad_jokes, nerdy, wordplay, dry_wit, absurdist, wholesome, observational, pop_culture, office_humor, science_geek, fantasy_gaming, history_gags, sports_banter, food_puns, travel_gags, awkward_social]",
+          "required": true,
+          "default": [
+            "dad_jokes"
+          ],
+          "section": "humor",
+          "description": "Select one or more comic styles the agent can combine when generating humor."
+        },
+        {
+          "name": "delivery_mode",
+          "type": "enum[alternate, post_only, comment_only]",
+          "required": true,
+          "default": "alternate",
+          "section": "interaction",
+          "description": "Choose whether the agent alternates between tagged posts and comments, or only uses one delivery mode."
+        },
+        {
+          "name": "post_lookback_rounds",
+          "type": "integer",
+          "required": true,
+          "default": 24,
+          "section": "interaction",
+          "description": "How far back to search recent content when selecting a target post to riff on."
+        },
+        {
+          "name": "opening_llm_prompt_override",
+          "type": "multiline_string",
+          "required": false,
+          "default": "",
+          "section": "prompt_customization",
+          "description": "Optional full override for the system prompt used when generating a standalone tagged joke post."
+        },
+        {
+          "name": "reply_llm_prompt_override",
+          "type": "multiline_string",
+          "required": false,
+          "default": "",
+          "section": "prompt_customization",
+          "description": "Optional full override for the system prompt used when generating a reply comment."
+        }
+      ]
+    },
+    {
       "agent_type": "hello_world",
       "display_name": "Hello World Agent",
       "llm_required": false,

@@ -332,6 +332,12 @@ def test_default_registry_includes_stress_attacker_agent() -> None:
     assert "stress_attacker" in registry.supported_types
 
 
+def test_default_registry_includes_comic_relief_agent() -> None:
+    registry = build_default_registry()
+
+    assert "comic_relief" in registry.supported_types
+
+
 def test_missing_agent_required_fields_are_rejected(tmp_path: Path) -> None:
     agents_path = tmp_path / "agents.json"
     agents_path.write_text(

@@ -17,6 +17,7 @@ class ActionExecutor:
         "master_of_puppets",
         "mop_puppet",
         "stress_attacker",
+        "comic_relief",
     }
 
     def __init__(
