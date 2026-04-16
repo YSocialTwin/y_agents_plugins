@@ -188,14 +188,14 @@
           "key": "core",
           "label": "Core Configuration",
           "description": "Base agent identity and scheduling settings."
-        }
-      ],
-      "client_parameter_sections": [
+        },
         {
           "key": "humor",
           "label": "Humor Style",
-          "description": "Choose one or more comedy styles for the agent to mix into its jokes."
-        },
+          "description": "Choose one or more comedy styles for this specific agent."
+        }
+      ],
+      "client_parameter_sections": [
         {
           "key": "interaction",
           "label": "Interaction Policy",
@@ -229,9 +229,7 @@
           "default": 24,
           "section": "core",
           "description": "Maximum number of joke actions the agent can perform in one simulation day."
-        }
-      ],
-      "client_parameters": [
+        },
         {
           "name": "humor_styles",
           "type": "enum_multi[dad_jokes, nerdy, wordplay, dry_wit, absurdist, wholesome, observational, pop_culture, office_humor, science_geek, fantasy_gaming, history_gags, sports_banter, food_puns, travel_gags, awkward_social]",
@@ -240,8 +238,10 @@
             "dad_jokes"
           ],
           "section": "humor",
-          "description": "Select one or more comic styles the agent can combine when generating humor."
-        },
+          "description": "Select one or more comic styles this agent can combine when generating humor."
+        }
+      ],
+      "client_parameters": [
         {
           "name": "delivery_mode",
           "type": "enum[alternate, post_only, comment_only]",
