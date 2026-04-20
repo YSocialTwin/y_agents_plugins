@@ -70,6 +70,18 @@ The `client.servers` object must contain the fields normally present in YClient-
 
 These are validated even if a given plugin agent type does not call the LLM yet. This keeps the plugin config shape aligned with YClient.
 
+### Stress/reward configuration
+
+If the experiment uses stress/reward, the plugin client can also receive a top-level or mirrored `stress_reward` block. The runtime normalizes that configuration and exposes it to the executor so plugin-generated posts, comments, reactions, shares, and moderation actions can update the same `stress_reward` table used by the standard clients.
+
+This matters in particular for agents such as:
+
+- `stress_attacker`
+- `comic_relief`
+- `moderator`
+- `propaganda`
+- `master_of_puppets`
+
 ### Simulation fields
 
 The `client.simulation` object must contain:
@@ -104,6 +116,14 @@ Example:
   }
 ]
 ```
+
+For LLM-backed agents, the population and client config may also carry agent-type-specific prompt overrides. Examples include:
+
+- `llm_prompt_override` for `stress_attacker` and `moderator`
+- `opening_llm_prompt_override` and `reply_llm_prompt_override` for `comic_relief`
+- `opening_llm_prompt_override` and `reply_llm_prompt_override` for `propaganda`
+
+These overrides replace the built-in system prompts entirely rather than appending instructions to them.
 
 ## Startup sequence
 
@@ -163,3 +183,7 @@ Cause: an agent’s `activity_profile` is not defined in `client.simulation.acti
 ### Missing LLM fields
 
 Cause: the config does not mirror the YClient server section closely enough.
+
+### Stress/reward agent without experiment support
+
+Cause: an agent type such as `stress_attacker` is being instantiated against an experiment that does not expose stress/reward in the generated config. In that case, the plugin may still load, but the stress-specific behaviors will not have the required downstream state.

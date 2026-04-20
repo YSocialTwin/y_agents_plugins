@@ -9,6 +9,7 @@ The client:
 - follows the experiment clock from the existing `rounds` table
 - executes exactly one plugin agent type per client process
 - uses the same `simulation.activity_profiles` model as YClient to decide when an agent is active
+- can participate in the experiment `stress_reward` pipeline when that feature is enabled upstream
 
 ## Package layout
 
@@ -24,7 +25,7 @@ The client:
 - The experiment is already running and exposes a standard experiment database such as `database_server.db`.
 - The plugin client receives a YClient-style JSON configuration file.
 - The plugin-managed population is supplied as JSON.
-- No new database tables are introduced by the plugin layer.
+- Some plugin types may create plugin-owned tables for their own coordination state.
 
 ## Main concepts
 
@@ -52,3 +53,5 @@ The plugin runtime does not treat all agents as always active. Instead, each age
 
 - [Agent Types](agent-types.md): how the packaged agent-type catalog works and how to add a new Python plugin class
 - [Client Instantiation](client-instantiation.md): how to prepare config files and launch a client against a live experiment
+
+The current built-in catalog includes lightweight smoke-test agents, governance agents, coordinated amplification agents, stress-oriented test agents, and humor-oriented agents.
