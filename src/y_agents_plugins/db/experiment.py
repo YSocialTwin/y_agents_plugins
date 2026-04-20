@@ -19,6 +19,7 @@ from sqlalchemy import (
     literal,
     select,
     text,
+    event,
 )
 from sqlalchemy.engine import Connection, Engine, RowMapping
 from sqlalchemy.pool import NullPool
@@ -31,18 +32,38 @@ class ExperimentDatabase:
 
     def __init__(self, database_url: str | Path):
         self.database_url = self._normalize_database_url(database_url)
+        engine_kwargs: dict[str, Any] = {
+            "future": True,
+            "pool_pre_ping": True,
+            "poolclass": NullPool,
+        }
+        if self.database_url.startswith("sqlite:///"):
+            engine_kwargs["connect_args"] = {"timeout": 30}
         self.engine: Engine = create_engine(
             self.database_url,
-            future=True,
-            pool_pre_ping=True,
-            poolclass=NullPool,
+            **engine_kwargs,
         )
+        if self.database_url.startswith("sqlite:///"):
+            self._configure_sqlite_engine(self.engine)
         self.metadata = MetaData()
         self._reflected_tables: dict[str, Table] = {}
         self._validate_connectivity()
 
     def connect(self) -> Connection:
         return self.engine.connect()
+
+    @staticmethod
+    def _configure_sqlite_engine(engine: Engine) -> None:
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragmas(dbapi_connection, connection_record):  # noqa: ARG001
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA synchronous=NORMAL")
+                cursor.execute("PRAGMA busy_timeout=30000")
+                cursor.execute("PRAGMA foreign_keys=ON")
+            finally:
+                cursor.close()
 
     def get_current_round(self, connection: Connection) -> SimulationRound:
         rounds = self.table("rounds")

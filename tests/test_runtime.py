@@ -13,6 +13,7 @@ from y_agents_plugins.config import (
     LLMServerConfig,
     SimulationConfig,
 )
+from y_agents_plugins.db import ExperimentDatabase
 from y_agents_plugins.runtime import ClientApp
 from y_agents_plugins.runtime.app import build_default_registry
 from y_agents_plugins.runtime import manifest as manifest_module
@@ -561,6 +562,22 @@ def test_client_supports_sqlalchemy_url(tmp_path: Path) -> None:
     app = ClientApp(config)
 
     assert app.database.database_url == f"sqlite:///{db_path}"
+
+
+def test_sqlite_experiment_database_enables_wal_and_busy_timeout(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    _build_db(db_path)
+
+    database = ExperimentDatabase(db_path)
+    connection = database.connect()
+    try:
+        journal_mode = connection.exec_driver_sql("PRAGMA journal_mode").scalar_one()
+        busy_timeout = connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one()
+    finally:
+        connection.close()
+
+    assert str(journal_mode).lower() == "wal"
+    assert int(busy_timeout) == 30000
 
 
 def test_client_exposes_langchain_llm_configuration(tmp_path: Path) -> None:
