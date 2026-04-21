@@ -325,14 +325,23 @@ class ExperimentDatabase:
                 for column, value in values.items()
                 if column in supported_columns and value is not None
             }
+            filtered_values = self._with_required_user_defaults(
+                connection,
+                filtered_values,
+                joined_on=joined_on if agent.joined_on <= 0 else agent.joined_on,
+                daily_budget=agent.daily_budget,
+            )
 
             if existing is None:
                 if "id" in supported_columns and id_type is not Integer:
                     filtered_values.setdefault("id", str(uuid.uuid4()))
                 connection.execute(user_mgmt.insert().values(**filtered_values))
             else:
+                update_values = dict(filtered_values)
+                if "id" in supported_columns and id_type is not Integer and str(existing[0] or "").strip() == "":
+                    update_values["id"] = str(uuid.uuid4())
                 connection.execute(
-                    user_mgmt.update().where(user_mgmt.c.id == existing[0]).values(**filtered_values)
+                    user_mgmt.update().where(user_mgmt.c.id == existing[0]).values(**update_values)
                 )
         connection.commit()
 
@@ -343,20 +352,25 @@ class ExperimentDatabase:
         username: str,
         text: str,
         round_id: Any,
-        topic_ids: list[int] | tuple[int, ...] | None = None,
+        topic_ids: list[Any] | tuple[Any, ...] | None = None,
     ) -> Any:
         post = self.table("post")
         user_id = self.get_user_id(connection, username)
+        values = self._with_post_defaults(connection, self._with_generated_id(
+            connection,
+            "post",
+            {
+                "tweet": text,
+                "user_id": user_id,
+                "comment_to": -1,
+                "thread_id": None,
+                "round": round_id,
+                "shared_from": -1,
+            },
+        ), post)
         result = connection.execute(
             post.insert()
-            .values(
-                tweet=text,
-                user_id=user_id,
-                comment_to=-1,
-                thread_id=None,
-                round=round_id,
-                shared_from=-1,
-            )
+            .values(**values)
             .returning(post.c.id)
         )
         post_id = _raw_id(result.scalar_one())
@@ -387,7 +401,7 @@ class ExperimentDatabase:
         round_id: Any,
         parent_post_id: Any,
         is_moderation_comment: bool = False,
-        topic_ids: list[int] | tuple[int, ...] | None = None,
+        topic_ids: list[Any] | tuple[Any, ...] | None = None,
     ) -> Any:
         post = self.table("post")
         user_id = self.get_user_id(connection, username)
@@ -397,6 +411,9 @@ class ExperimentDatabase:
         if parent is None:
             raise RuntimeError(f"Parent post '{parent_post_id}' not found in post table")
         thread_id = _nullable_id(parent["thread_id"]) or _raw_id(parent["id"])
+        inherited_topic_ids: list[Any] | tuple[Any, ...] | None = topic_ids
+        if not inherited_topic_ids:
+            inherited_topic_ids = self.get_post_topic_ids(connection, post_id=parent_post_id)
         values = {
             "tweet": text,
             "user_id": user_id,
@@ -407,6 +424,7 @@ class ExperimentDatabase:
         }
         if "is_moderation_comment" in post.c:
             values["is_moderation_comment"] = int(bool(is_moderation_comment))
+        values = self._with_post_defaults(connection, self._with_generated_id(connection, "post", values), post)
         result = connection.execute(post.insert().values(**values).returning(post.c.id))
         comment_id = _raw_id(result.scalar_one())
         self._insert_mentions_for_text(
@@ -418,7 +436,7 @@ class ExperimentDatabase:
         self._insert_post_topics(
             connection,
             post_id=comment_id,
-            topic_ids=topic_ids,
+            topic_ids=inherited_topic_ids,
         )
         connection.commit()
         return comment_id
@@ -431,7 +449,7 @@ class ExperimentDatabase:
         shared_post_id: Any,
         text: str,
         round_id: Any,
-        topic_ids: list[int] | tuple[int, ...] | None = None,
+        topic_ids: list[Any] | tuple[Any, ...] | None = None,
     ) -> Any:
         post = self.table("post")
         user_id = self.get_user_id(connection, username)
@@ -451,6 +469,7 @@ class ExperimentDatabase:
         for optional_column in ("news_id", "image_id", "image_post_id"):
             if optional_column in post.c and optional_column in original:
                 values[optional_column] = original[optional_column]
+        values = self._with_post_defaults(connection, self._with_generated_id(connection, "post", values), post)
         result = connection.execute(post.insert().values(**values).returning(post.c.id))
         share_id = _raw_id(result.scalar_one())
         if "thread_id" in post.c:
@@ -488,10 +507,16 @@ class ExperimentDatabase:
         result = connection.execute(
             reactions.insert()
             .values(
-                round=round_id,
-                user_id=user_id,
-                post_id=post_id,
-                type=str(reaction_type),
+                **self._with_generated_id(
+                    connection,
+                    "reactions",
+                    {
+                        "round": round_id,
+                        "user_id": user_id,
+                        "post_id": post_id,
+                        "type": str(reaction_type),
+                    },
+                )
             )
             .returning(reactions.c.id)
         )
@@ -527,11 +552,17 @@ class ExperimentDatabase:
         for _ in range(max(1, int(count))):
             connection.execute(
                 reported.insert().values(
-                    type=str(report_type),
-                    to_uid=None,
-                    to_post=post_id,
-                    from_uid=user_id,
-                    tid=round_id,
+                    **self._with_generated_id(
+                        connection,
+                        "reported",
+                        {
+                            "type": str(report_type),
+                            "to_uid": None,
+                            "to_post": post_id,
+                            "from_uid": user_id,
+                            "tid": round_id,
+                        },
+                    )
                 )
             )
             written += 1
@@ -568,10 +599,16 @@ class ExperimentDatabase:
             return False
         connection.execute(
             follow.insert().values(
-                user_id=user_id,
-                follower_id=target_user_id,
-                round=round_id,
-                action=normalized_action,
+                **self._with_generated_id(
+                    connection,
+                    "follow",
+                    {
+                        "user_id": user_id,
+                        "follower_id": target_user_id,
+                        "round": round_id,
+                        "action": normalized_action,
+                    },
+                )
             )
         )
         connection.commit()
@@ -611,6 +648,12 @@ class ExperimentDatabase:
             for key, value in values.items()
             if key in supported_columns and value is not None
         }
+        filtered = self._with_required_user_defaults(
+            connection,
+            filtered,
+            joined_on=joined_on,
+            daily_budget=daily_budget,
+        )
         if existing is None:
             if "id" in supported_columns and id_type is not Integer:
                 filtered.setdefault("id", str(uuid.uuid4()))
@@ -627,11 +670,15 @@ class ExperimentDatabase:
                     raise RuntimeError(f"Failed to create plugin user '{username}'")
                 return _raw_id(inserted[0])
             return _raw_id(inserted_id)
+        update_values = dict(filtered)
+        if "id" in supported_columns and id_type is not Integer and str(existing[0] or "").strip() == "":
+            update_values["id"] = str(uuid.uuid4())
         connection.execute(
-            user_mgmt.update().where(user_mgmt.c.id == existing[0]).values(**filtered)
+            user_mgmt.update().where(user_mgmt.c.id == existing[0]).values(**update_values)
         )
         connection.commit()
-        return _raw_id(existing[0])
+        current_id = update_values.get("id", existing[0])
+        return _raw_id(current_id)
 
     def ensure_stress_reward_schema(self, connection: Connection) -> None:
         metadata = MetaData()
@@ -866,10 +913,16 @@ class ExperimentDatabase:
                 continue
             connection.execute(
                 mention_table.insert().values(
-                    user_id=user_id,
-                    post_id=post_id,
-                    round=round_id,
-                    answered=0,
+                    **self._with_generated_id(
+                        connection,
+                        "mentions",
+                        {
+                            "user_id": user_id,
+                            "post_id": post_id,
+                            "round": round_id,
+                            "answered": 0,
+                        },
+                    )
                 )
             )
 
@@ -878,25 +931,36 @@ class ExperimentDatabase:
         connection: Connection,
         *,
         post_id: Any,
-        topic_ids: list[int] | tuple[int, ...] | None,
+        topic_ids: list[Any] | tuple[Any, ...] | None,
     ) -> None:
         if not topic_ids or not self.has_table(connection, "post_topics"):
             return
         post_topics = self.table("post_topics")
         existing_topic_ids = {
-            int(row[0])
+            str(_raw_id(row[0]))
             for row in connection.execute(
                 select(post_topics.c.topic_id).where(post_topics.c.post_id == post_id)
             ).all()
         }
         for topic_id in topic_ids:
-            topic_id = int(topic_id)
-            if topic_id in existing_topic_ids:
+            normalized_topic_id = self._coerce_for_column(
+                connection,
+                "post_topics",
+                "topic_id",
+                topic_id,
+            )
+            if str(normalized_topic_id) in existing_topic_ids:
                 continue
             connection.execute(
                 post_topics.insert().values(
-                    post_id=post_id,
-                    topic_id=topic_id,
+                    **self._with_generated_id(
+                        connection,
+                        "post_topics",
+                        {
+                            "post_id": post_id,
+                            "topic_id": normalized_topic_id,
+                        },
+                    )
                 )
             )
 
@@ -905,18 +969,24 @@ class ExperimentDatabase:
         connection: Connection,
         *,
         user_id: Any,
-        topic_id: int,
+        topic_id: Any,
         current_round_id: Any | None = None,
     ) -> float | None:
         if not self.has_table(connection, "agent_opinion"):
             return None
         agent_opinion = self.table("agent_opinion")
         rounds = self.table("rounds")
+        normalized_topic_id = self._coerce_for_column(
+            connection,
+            "agent_opinion",
+            "topic_id",
+            topic_id,
+        )
         statement = (
             select(agent_opinion.c.opinion, rounds.c.day, rounds.c.hour, agent_opinion.c.id)
             .select_from(agent_opinion.join(rounds, rounds.c.id == agent_opinion.c.tid))
             .where(agent_opinion.c.agent_id == user_id)
-            .where(agent_opinion.c.topic_id == int(topic_id))
+            .where(agent_opinion.c.topic_id == normalized_topic_id)
         )
         if current_round_id is not None:
             current_round = connection.execute(
@@ -943,29 +1013,50 @@ class ExperimentDatabase:
         connection: Connection,
         *,
         user_id: Any,
-        topic_id: int,
+        topic_id: Any,
         opinion: float,
         round_id: Any,
     ) -> bool:
         if not self.has_table(connection, "agent_opinion"):
             return False
+        normalized_topic_id = self._coerce_for_column(
+            connection,
+            "agent_opinion",
+            "topic_id",
+            topic_id,
+        )
         current = self.get_latest_agent_opinion(
             connection,
             user_id=user_id,
-            topic_id=int(topic_id),
+            topic_id=normalized_topic_id,
             current_round_id=None,
         )
         if current is not None and abs(float(current) - float(opinion)) <= 1e-9:
             return False
         agent_opinion = self.table("agent_opinion")
+        values = {
+            "agent_id": user_id,
+            "tid": round_id,
+            "topic_id": normalized_topic_id,
+            "opinion": float(opinion),
+        }
+        if "id_interacted_with" in agent_opinion.c and "id_interacted_with" not in values:
+            values["id_interacted_with"] = self._missing_reference_value(
+                connection,
+                "agent_opinion",
+                "id_interacted_with",
+            )
+        if "id_post" in agent_opinion.c and "id_post" not in values:
+            values["id_post"] = self._missing_reference_value(
+                connection,
+                "agent_opinion",
+                "id_post",
+            )
+        if "stubborn" in agent_opinion.c and "stubborn" not in values:
+            values["stubborn"] = 0
         connection.execute(
             agent_opinion.insert().values(
-                agent_id=user_id,
-                tid=round_id,
-                topic_id=int(topic_id),
-                id_interacted_with=-1,
-                id_post=-1,
-                opinion=float(opinion),
+                **self._with_generated_id(connection, "agent_opinion", values)
             )
         )
         connection.commit()
@@ -975,13 +1066,19 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        topic_id: int,
+        topic_id: Any,
         current_round_id: Any | None = None,
     ) -> tuple[dict[str, Any], ...]:
         if not self.has_table(connection, "agent_opinion"):
             return ()
         agent_opinion = self.table("agent_opinion")
         rounds = self.table("rounds")
+        normalized_topic_id = self._coerce_for_column(
+            connection,
+            "agent_opinion",
+            "topic_id",
+            topic_id,
+        )
         statement = select(
             agent_opinion.c.agent_id,
             agent_opinion.c.opinion,
@@ -989,7 +1086,7 @@ class ExperimentDatabase:
             agent_opinion.c.id,
             rounds.c.day,
             rounds.c.hour,
-        ).select_from(agent_opinion.join(rounds, rounds.c.id == agent_opinion.c.tid)).where(agent_opinion.c.topic_id == int(topic_id))
+        ).select_from(agent_opinion.join(rounds, rounds.c.id == agent_opinion.c.tid)).where(agent_opinion.c.topic_id == normalized_topic_id)
         if current_round_id is not None:
             current_round = connection.execute(
                 select(rounds.c.day, rounds.c.hour)
@@ -1030,9 +1127,9 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        configured_topic_id: int | None = None,
+        configured_topic_id: Any | None = None,
         topic_name: str | None = None,
-    ) -> int | None:
+    ) -> Any | None:
         if not self.has_table(connection, "interests"):
             return configured_topic_id
         interests = self.table("interests")
@@ -1044,21 +1141,79 @@ class ExperimentDatabase:
             else None
         )
         if configured_topic_id is not None:
+            normalized_topic_id = self._coerce_for_column(
+                connection,
+                "interests",
+                "iid",
+                configured_topic_id,
+            )
             row = connection.execute(
                 select(interests.c.iid)
-                .where(interests.c.iid == int(configured_topic_id))
+                .where(interests.c.iid == normalized_topic_id)
                 .limit(1)
             ).first()
             if row is not None:
-                return int(row[0])
+                return _raw_id(row[0])
         normalized_name = str(topic_name or "").strip()
         if interest_column is None or not normalized_name:
             return None
         rows = connection.execute(select(interests.c.iid, interest_column)).all()
         for row in rows:
             if str(row[1] or "").strip().casefold() == normalized_name.casefold():
-                return int(row[0])
+                return _raw_id(row[0])
         return None
+
+    def get_post_topic_ids(
+        self,
+        connection: Connection,
+        *,
+        post_id: Any,
+    ) -> tuple[Any, ...]:
+        if not self.has_table(connection, "post_topics"):
+            return ()
+        post_topics = self.table("post_topics")
+        rows = connection.execute(
+            select(post_topics.c.topic_id)
+            .where(post_topics.c.post_id == post_id)
+            .order_by(post_topics.c.topic_id.asc())
+        ).all()
+        return tuple(_raw_id(row[0]) for row in rows if row[0] not in (None, ""))
+
+    def get_post_topic_names(
+        self,
+        connection: Connection,
+        *,
+        post_id: Any,
+    ) -> tuple[str, ...]:
+        topic_ids = self.get_post_topic_ids(connection, post_id=post_id)
+        if not topic_ids:
+            return ()
+        if not self.has_table(connection, "interests"):
+            return tuple(str(topic_id) for topic_id in topic_ids)
+        interests = self.table("interests")
+        interest_column = (
+            interests.c.interest
+            if "interest" in interests.c
+            else interests.c.topic
+            if "topic" in interests.c
+            else None
+        )
+        if interest_column is None:
+            return tuple(str(topic_id) for topic_id in topic_ids)
+        rows = connection.execute(
+            select(interests.c.iid, interest_column)
+        ).all()
+        names_by_id = {
+            str(_raw_id(row[0])): str(row[1] or "").strip()
+            for row in rows
+            if row[0] not in (None, "")
+        }
+        resolved: list[str] = []
+        for topic_id in topic_ids:
+            name = names_by_id.get(str(topic_id)) or str(topic_id)
+            if name:
+                resolved.append(name)
+        return tuple(resolved)
 
     def get_thread_posts(
         self,
@@ -1249,7 +1404,7 @@ class ExperimentDatabase:
         thread_id: Any,
         discussion_round_id: Any,
         target_opinion: float | None,
-        topic_id: int,
+        topic_id: Any,
     ) -> int:
         activity = self.table("propaganda_activity")
         result = connection.execute(
@@ -1260,7 +1415,12 @@ class ExperimentDatabase:
                 thread_id=thread_id,
                 discussion_round_id=discussion_round_id,
                 target_opinion=target_opinion,
-                topic_id=int(topic_id),
+                topic_id=self._coerce_for_column(
+                    connection,
+                    "propaganda_activity",
+                    "topic_id",
+                    topic_id,
+                ),
             )
             .returning(activity.c.id)
         )
@@ -1312,7 +1472,7 @@ class ExperimentDatabase:
             "target_opinion": (
                 None if row["target_opinion"] is None else float(row["target_opinion"])
             ),
-            "topic_id": int(row["topic_id"]),
+            "topic_id": _raw_id(row["topic_id"]),
         }
 
     def get_latest_propaganda_thread_states(
@@ -1344,7 +1504,7 @@ class ExperimentDatabase:
                 "target_opinion": (
                     None if row["target_opinion"] is None else float(row["target_opinion"])
                 ),
-                "topic_id": int(row["topic_id"]),
+                "topic_id": _raw_id(row["topic_id"]),
             }
         return tuple(latest.values())
 
@@ -1448,10 +1608,10 @@ class ExperimentDatabase:
             raise RuntimeError("sys_messages table exposes neither duration nor to_round")
         result = connection.execute(
             sys_messages.insert()
-            .values(**values)
+            .values(**self._with_generated_id(connection, "sys_messages", values))
             .returning(sys_messages.c.id)
         )
-        message_id = int(result.scalar_one())
+        message_id = _raw_id(result.scalar_one())
         connection.commit()
         return message_id
 
@@ -1742,6 +1902,114 @@ class ExperimentDatabase:
         with self.engine.connect() as connection:
             connection.execute(text("SELECT 1"))
 
+    def _with_required_user_defaults(
+        self,
+        connection: Connection,
+        values: dict[str, Any],
+        *,
+        joined_on: Any,
+        daily_budget: float | None,
+    ) -> dict[str, Any]:
+        enriched = dict(values)
+        if not self.has_table(connection, "user_mgmt"):
+            return enriched
+        column_info = inspect(connection).get_columns("user_mgmt")
+        supported = {column["name"] for column in column_info}
+        if "joined_on" in supported and enriched.get("joined_on") is None:
+            enriched["joined_on"] = joined_on
+        defaults: dict[str, Any] = {
+            "round_actions": max(1, int(float(daily_budget or 1))),
+            "is_page": 0,
+            "daily_activity_level": 1,
+            "last_active_day": 0,
+        }
+        for column in column_info:
+            name = column["name"]
+            if name == "id" or column.get("primary_key"):
+                continue
+            if name in enriched or column.get("nullable", True):
+                continue
+            if column.get("default") is not None:
+                continue
+            if name in defaults:
+                enriched[name] = defaults[name]
+                continue
+            column_type = str(column.get("type") or "").upper()
+            if "INT" in column_type or "REAL" in column_type or "NUM" in column_type:
+                enriched[name] = 0
+            else:
+                enriched[name] = ""
+        return enriched
+
+    def _with_generated_id(
+        self,
+        connection: Connection,
+        table_name: str,
+        values: dict[str, Any],
+    ) -> dict[str, Any]:
+        enriched = dict(values)
+        column_info = {column["name"]: column for column in inspect(connection).get_columns(table_name)}
+        id_column = column_info.get("id")
+        if id_column is None or "id" in enriched:
+            return enriched
+        column_type = str(id_column.get("type") or "").upper()
+        if "INT" in column_type:
+            return enriched
+        enriched["id"] = str(uuid.uuid4())
+        return enriched
+
+    def _coerce_for_column(
+        self,
+        connection: Connection,
+        table_name: str,
+        column_name: str,
+        value: Any,
+    ) -> Any:
+        if value is None:
+            return None
+        column_info = {
+            column["name"]: column
+            for column in inspect(connection).get_columns(table_name)
+        }
+        column = column_info.get(column_name)
+        if column is None:
+            return value
+        column_type = str(column.get("type") or "").upper()
+        if "INT" in column_type:
+            return int(value)
+        if any(token in column_type for token in ("REAL", "FLOA", "DOUB", "NUM")):
+            return float(value)
+        return str(value)
+
+    def _missing_reference_value(
+        self,
+        connection: Connection,
+        table_name: str,
+        column_name: str,
+    ) -> Any:
+        column_info = {
+            column["name"]: column
+            for column in inspect(connection).get_columns(table_name)
+        }
+        column = column_info.get(column_name)
+        if column is None:
+            return None
+        if column.get("nullable", True):
+            return None
+        column_type = str(column.get("type") or "").upper()
+        if "INT" in column_type:
+            return -1
+        return ""
+
+    @staticmethod
+    def _with_post_defaults(connection: Connection, values: dict[str, Any], post_table: Table) -> dict[str, Any]:
+        enriched = dict(values)
+        if "moderated" in post_table.c:
+            enriched.setdefault("moderated", 0)
+        if "is_moderation_comment" in post_table.c:
+            enriched.setdefault("is_moderation_comment", 0)
+        return enriched
+
     def _id_sql_type(self, connection: Connection):
         rounds = self.table("rounds")
         row = connection.execute(select(rounds.c.id).limit(1)).first()
@@ -1752,6 +2020,28 @@ class ExperimentDatabase:
             return Integer
         text_value = str(value).strip()
         return Integer if text_value.isdigit() else String(64)
+
+    def _topic_id_sql_type(self, connection: Connection):
+        for table_name, column_name in (
+            ("post_topics", "topic_id"),
+            ("agent_opinion", "topic_id"),
+            ("interests", "iid"),
+            ("article_topics", "topic_id"),
+        ):
+            if not self.has_table(connection, table_name):
+                continue
+            columns = {
+                column["name"]: column
+                for column in inspect(connection).get_columns(table_name)
+            }
+            column = columns.get(column_name)
+            if column is None:
+                continue
+            column_type = str(column.get("type") or "").upper()
+            if "INT" in column_type:
+                return Integer
+            return String(64)
+        return Integer
 
     def _max_score_expr(self, *columns):
         if not columns:

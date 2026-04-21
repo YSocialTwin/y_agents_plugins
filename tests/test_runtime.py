@@ -237,6 +237,114 @@ def test_client_registers_agents_in_user_mgmt(tmp_path: Path) -> None:
     assert row == ("mod_1", "mod_1@example.org", "moderator")
 
 
+def test_client_registers_agents_with_required_hpc_user_defaults(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    agents_path = tmp_path / "agents.json"
+    _build_db(db_path)
+    connection = sqlite3.connect(db_path)
+    connection.execute("ALTER TABLE user_mgmt ADD COLUMN round_actions INTEGER NOT NULL DEFAULT 1")
+    connection.execute("ALTER TABLE user_mgmt ADD COLUMN is_page INTEGER NOT NULL DEFAULT 0")
+    connection.commit()
+    connection.close()
+    _build_agents_json(agents_path)
+    config = AppConfig(
+        database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+        client=ClientConfig(
+            client_id="moderator-client",
+            agent_type="moderator",
+            agents_json_path=agents_path,
+            llm_servers=LLMServerConfig(values=_llm_servers()),
+            simulation=SimulationConfig(
+                days=30,
+                slots=24,
+                population_json_path=agents_path,
+                raw=_simulation(tmp_path, agents_path),
+            ),
+            agent_settings=_moderator_settings(),
+            max_ticks=1,
+        ),
+    )
+
+    app = ClientApp(config)
+    app.run()
+
+    connection = sqlite3.connect(db_path)
+    row = connection.execute(
+        "SELECT username, round_actions, is_page FROM user_mgmt WHERE username = 'mod_1'"
+    ).fetchone()
+    connection.close()
+
+    assert row == ("mod_1", 1, 0)
+
+
+def test_client_registers_hpc_agent_without_overwriting_existing_uuid(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    agents_path = tmp_path / "agents.json"
+    connection = sqlite3.connect(db_path)
+    connection.executescript(
+        """
+        CREATE TABLE rounds (id VARCHAR(36) PRIMARY KEY, day INTEGER, hour INTEGER);
+        CREATE TABLE user_mgmt (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            username TEXT NOT NULL,
+            email TEXT,
+            password TEXT NOT NULL,
+            user_type TEXT,
+            owner TEXT,
+            language TEXT,
+            joined_on VARCHAR(36),
+            activity_profile TEXT,
+            round_actions INTEGER NOT NULL,
+            is_page INTEGER NOT NULL
+        );
+        CREATE TABLE post (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            tweet TEXT NOT NULL,
+            user_id VARCHAR(36) NOT NULL,
+            comment_to VARCHAR(36),
+            thread_id VARCHAR(36),
+            round VARCHAR(36),
+            shared_from VARCHAR(36),
+            moderated INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO rounds (id, day, hour) VALUES ('round-1', 0, 0);
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner, language, joined_on, activity_profile, round_actions, is_page)
+        VALUES ('existing-uuid', 'mod_1', 'mod_1@example.org', 'secret', 'moderator', 'experiment', 'en', 'round-1', 'Always On', 10, 0);
+        """
+    )
+    connection.commit()
+    connection.close()
+    _build_agents_json(agents_path)
+    config = AppConfig(
+        database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+        client=ClientConfig(
+            client_id="moderator-client",
+            agent_type="moderator",
+            agents_json_path=agents_path,
+            llm_servers=LLMServerConfig(values=_llm_servers()),
+            simulation=SimulationConfig(
+                days=30,
+                slots=24,
+                population_json_path=agents_path,
+                raw=_simulation(tmp_path, agents_path),
+            ),
+            agent_settings=_moderator_settings(),
+            max_ticks=1,
+        ),
+    )
+
+    app = ClientApp(config)
+    app.run()
+
+    connection = sqlite3.connect(db_path)
+    row = connection.execute(
+        "SELECT id, username, round_actions, is_page FROM user_mgmt WHERE username = 'mod_1'"
+    ).fetchone()
+    connection.close()
+
+    assert row == ("existing-uuid", "mod_1", 42, 0)
+
+
 def test_app_config_inherits_stress_reward_from_experiment_config(tmp_path: Path) -> None:
     db_path = tmp_path / "simulation.db"
     agents_path = tmp_path / "agents.json"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sqlalchemy import Column, Integer, MetaData, String, Table, select
@@ -95,6 +96,9 @@ class StressAttackerAgent(BaseAgentPlugin):
                 settings.get("critical_comment_mode") or "synthetic"
             ).strip().lower()
             if surfaced_post is not None and critical_comment_mode in {"llm", "synthetic"}:
+                topic_ids = list(
+                    self.database.get_post_topic_ids(context.connection, post_id=surfaced_post.id)
+                )
                 actions.append(
                     AgentAction(
                         agent_type=self.agent_type,
@@ -102,8 +106,10 @@ class StressAttackerAgent(BaseAgentPlugin):
                         payload={
                             "parent_post_id": surfaced_post.id,
                             "thread_id": surfaced_post.thread_id or surfaced_post.id,
+                            "topic_ids": topic_ids,
                             "text": (
                                 self._build_critical_comment(
+                                    context=context,
                                     agent=agent,
                                     target_user=target_user,
                                     target_post=surfaced_post,
@@ -470,19 +476,38 @@ class StressAttackerAgent(BaseAgentPlugin):
     def _build_critical_comment(
         self,
         *,
+        context: AgentContext,
         agent: AgentSpec,
         target_user: UserRecord,
         target_post: PostRecord,
     ) -> str:
         if self.llm is None or not getattr(self.llm, "is_available", False):
-            return (
-                f"@{target_user.username} Stop writing useless and stupid things. "
-                "You're only embarrassing yourself!"
+            return self._normalize_target_tag(
+                (
+                    f"@{target_user.username} Stop writing useless and stupid things. "
+                    "You're only embarrassing yourself!"
+                ),
+                target_user.username,
             )
+        topic_names = self.database.get_post_topic_names(
+            context.connection, post_id=target_post.id
+        )
+        thread_posts = self.database.get_thread_posts(
+            context.connection,
+            thread_id=target_post.thread_id or target_post.id,
+            limit=4,
+        )
+        thread_lines = []
+        for post in thread_posts:
+            author = self._safe_user_by_id(post.author_id, users=context.users)
+            username = author.username if author is not None else str(post.author_id)
+            thread_lines.append(f"@{username}: {post.text}")
         system_prompt = (
             "You are writing one concise public reply to a target user's post. "
             "The reply should be critical and skeptical, personal and with a highly confrontative tone. "
-            f"{self._SAFETY_DIRECTIVE}"
+            f"{self._SAFETY_DIRECTIVE} "
+            "Stay tightly focused on the target post and its topic. "
+            "Do not invent background facts unrelated to the visible thread."
         )
         override_prompt = str(self._resolved_settings(agent).get("llm_prompt_override") or "").strip()
         if override_prompt:
@@ -490,20 +515,21 @@ class StressAttackerAgent(BaseAgentPlugin):
         user_prompt = (
             f"Stress attacker profile: {agent.parameters or {}}\n"
             f"Target user profile: {target_user.profile}\n"
+            f"Topic labels: {', '.join(topic_names) if topic_names else 'unknown'}\n"
             f"Target post: {target_post.text}\n"
+            f"Visible thread context:\n" + ("\n".join(thread_lines) if thread_lines else "(no additional context)") + "\n"
             f"Write one short reply that starts with '@{target_user.username} '. "
-            "Question the argument, point out inconsistency, or ask for evidence. "
+            "Question the argument, point out inconsistency, or ask for evidence while staying on the same topic as the target post. "
             "Be personal, highly confrontative and critical in your language. "
             "Return only the reply text."
         )
         text = self.llm.invoke_text(system_prompt=system_prompt, user_prompt=user_prompt).strip()
-        cleaned = " ".join(text.split())
+        cleaned = self._normalize_target_tag(text, target_user.username)
         if not cleaned:
-            cleaned = (
-                f"@{target_user.username} that's only nonsense. Shout up!"
+            cleaned = self._normalize_target_tag(
+                f"@{target_user.username} that's only nonsense. Shout up!",
+                target_user.username,
             )
-        if not cleaned.lower().startswith(f"@{target_user.username}".lower()):
-            cleaned = f"@{target_user.username} {cleaned}"
         return cleaned
 
     def _build_synthetic_comment(
@@ -519,6 +545,25 @@ class StressAttackerAgent(BaseAgentPlugin):
         cleaned = " ".join(configured.split())
         if not cleaned:
             cleaned = self._DEFAULT_SYNTHETIC_COMMENT
-        if not cleaned.lower().startswith(f"@{target_user.username}".lower()):
-            cleaned = f"@{target_user.username} {cleaned}"
+        return self._normalize_target_tag(cleaned, target_user.username)
+
+    @staticmethod
+    def _sanitize_generated_social_text(text: str) -> str:
+        cleaned = str(text or "").strip()
+        cleaned = re.sub(
+            r'^\s*(?:here(?:’|\'|)s|here is)\s+(?:a\s+)?(?:possible\s+)?(?:post|reply|comment)\s*:\s*',
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        ).strip()
+        if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+            cleaned = cleaned[1:-1].strip()
+        return cleaned
+
+    @classmethod
+    def _normalize_target_tag(cls, text: str, username: str) -> str:
+        cleaned = cls._sanitize_generated_social_text(text)
+        direct_tag = re.compile(rf"@{re.escape(username)}\b", re.IGNORECASE)
+        if not direct_tag.search(cleaned):
+            cleaned = f"@{username} {cleaned}".strip()
         return cleaned

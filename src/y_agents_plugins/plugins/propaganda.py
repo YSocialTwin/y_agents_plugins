@@ -69,7 +69,7 @@ class PropagandaAgent(BaseAgentPlugin):
             Column("thread_id", id_type, nullable=False),
             Column("discussion_round_id", id_type, nullable=False),
             Column("target_opinion", REAL, nullable=True),
-            Column("topic_id", Integer, nullable=False),
+            Column("topic_id", database._topic_id_sql_type(connection), nullable=False),
         )
         if not database.has_table(connection, "propaganda_activity"):
             propaganda_activity.create(connection, checkfirst=True)
@@ -183,7 +183,7 @@ class PropagandaAgent(BaseAgentPlugin):
             action_type="CREATE_POST",
             payload={
                 "text": message,
-                "topic_ids": [int(candidate["campaign"]["runtime_topic_id"])],
+                "topic_ids": [candidate["campaign"]["runtime_topic_id"]],
                 "stress_reward": {
                     "tone": "positive",
                     "action": "post:positive",
@@ -191,7 +191,7 @@ class PropagandaAgent(BaseAgentPlugin):
                 },
                 "propaganda_activity": {
                     "target_uid": candidate["target_uid"],
-                    "topic_id": int(candidate["campaign"]["runtime_topic_id"]),
+                    "topic_id": candidate["campaign"]["runtime_topic_id"],
                     "target_opinion": float(candidate["current_opinion"]),
                     "discussion_round_id": context.current_round.id,
                 },
@@ -206,15 +206,13 @@ class PropagandaAgent(BaseAgentPlugin):
         campaigns: list[dict[str, Any]],
         active_thread: dict[str, Any],
     ) -> AgentAction | None:
-        campaign = self._campaign_for_topic(
-            campaigns, int(active_thread["topic_id"])
-        )
+        campaign = self._campaign_for_topic(campaigns, active_thread["topic_id"])
         if campaign is None:
             return None
         current_opinion = self.database.get_latest_agent_opinion(
             context.connection,
             user_id=active_thread["target_uid"],
-            topic_id=int(active_thread["topic_id"]),
+            topic_id=active_thread["topic_id"],
             current_round_id=context.current_round.id,
         )
         latest_target_reply = self.database.get_latest_thread_post_by_user(
@@ -251,14 +249,14 @@ class PropagandaAgent(BaseAgentPlugin):
                 "parent_post_id": latest_target_reply.id,
                 "thread_id": active_thread["thread_id"],
                 "text": message,
-                "topic_ids": [int(active_thread["topic_id"])],
+                "topic_ids": [active_thread["topic_id"]],
                 "stress_reward": {
                     "tone": "positive",
                     "action": "comment:positive",
                 },
                 "propaganda_activity": {
                     "target_uid": active_thread["target_uid"],
-                    "topic_id": int(active_thread["topic_id"]),
+                    "topic_id": active_thread["topic_id"],
                     "target_opinion": current_opinion,
                     "discussion_round_id": context.current_round.id,
                     "thread_id": active_thread["thread_id"],
@@ -275,15 +273,13 @@ class PropagandaAgent(BaseAgentPlugin):
         campaigns: list[dict[str, Any]],
         active_thread: dict[str, Any],
     ) -> bool:
-        campaign = self._campaign_for_topic(
-            campaigns, int(active_thread["topic_id"])
-        )
+        campaign = self._campaign_for_topic(campaigns, active_thread["topic_id"])
         if campaign is None:
             return True
         current_opinion = self.database.get_latest_agent_opinion(
             context.connection,
             user_id=active_thread["target_uid"],
-            topic_id=int(active_thread["topic_id"]),
+            topic_id=active_thread["topic_id"],
             current_round_id=context.current_round.id,
         )
         if current_opinion is not None and self._target_reached(
@@ -311,7 +307,7 @@ class PropagandaAgent(BaseAgentPlugin):
         for campaign in campaigns:
             latest = self.database.get_latest_opinions_for_topic(
                 context.connection,
-                topic_id=int(campaign["runtime_topic_id"]),
+                topic_id=campaign["runtime_topic_id"],
                 current_round_id=context.current_round.id,
             )
             for row in latest:
@@ -489,7 +485,7 @@ class PropagandaAgent(BaseAgentPlugin):
             self.database.set_fixed_agent_opinion(
                 context.connection,
                 user_id=propaganda_uid,
-                topic_id=int(runtime_topic_id),
+                topic_id=runtime_topic_id,
                 opinion=float(target_opinion),
                 round_id=context.current_round.id,
             )
@@ -511,7 +507,7 @@ class PropagandaAgent(BaseAgentPlugin):
                 continue
             campaigns.append(
                 {
-                    "topic_id": int(topic_id),
+                    "topic_id": topic_id,
                     "topic_name": str(entry.get("topic_name") or topic_id),
                     "target_opinion": float(target_opinion),
                     "target_opinion_group": str(
@@ -535,10 +531,10 @@ class PropagandaAgent(BaseAgentPlugin):
         return campaigns
 
     def _campaign_for_topic(
-        self, campaigns: list[dict[str, Any]], topic_id: int
+        self, campaigns: list[dict[str, Any]], topic_id: Any
     ) -> dict[str, Any] | None:
         for campaign in campaigns:
-            if int(campaign["runtime_topic_id"]) == int(topic_id):
+            if str(campaign["runtime_topic_id"]) == str(topic_id):
                 return campaign
         return None
 
@@ -551,13 +547,13 @@ class PropagandaAgent(BaseAgentPlugin):
         for campaign in campaigns:
             runtime_topic_id = self.database.resolve_interest_topic_id(
                 context.connection,
-                configured_topic_id=int(campaign["topic_id"]),
+                configured_topic_id=campaign["topic_id"],
                 topic_name=str(campaign.get("topic_name") or ""),
             )
             if runtime_topic_id is None:
                 continue
             enriched = dict(campaign)
-            enriched["runtime_topic_id"] = int(runtime_topic_id)
+            enriched["runtime_topic_id"] = runtime_topic_id
             resolved.append(enriched)
         return resolved
 

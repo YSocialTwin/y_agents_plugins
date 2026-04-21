@@ -142,6 +142,133 @@ def _build_db(path: Path) -> sqlite3.Connection:
     return connection
 
 
+def _build_uuid_hpc_db(path: Path) -> sqlite3.Connection:
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """
+        CREATE TABLE rounds (id VARCHAR(36) PRIMARY KEY, day INTEGER, hour INTEGER);
+        CREATE TABLE user_mgmt (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            username TEXT NOT NULL,
+            email TEXT,
+            password TEXT NOT NULL,
+            user_type TEXT,
+            owner TEXT,
+            interests TEXT,
+            age INTEGER,
+            leaning TEXT,
+            left_on VARCHAR(36),
+            round_actions INTEGER NOT NULL,
+            is_page INTEGER NOT NULL,
+            activity_profile TEXT,
+            daily_activity_level INTEGER,
+            last_active_day INTEGER
+        );
+        CREATE TABLE post (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            tweet TEXT NOT NULL,
+            user_id VARCHAR(36) NOT NULL,
+            comment_to VARCHAR(36),
+            thread_id VARCHAR(36),
+            round VARCHAR(36),
+            shared_from VARCHAR(36),
+            moderated INTEGER NOT NULL,
+            is_moderation_comment INTEGER NOT NULL
+        );
+        CREATE TABLE reported (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            type TEXT NOT NULL,
+            to_uid VARCHAR(36),
+            to_post VARCHAR(36),
+            from_uid VARCHAR(36) NOT NULL,
+            tid VARCHAR(36) NOT NULL
+        );
+        CREATE TABLE post_toxicity (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            post_id VARCHAR(36) NOT NULL,
+            toxicity REAL DEFAULT 0 NOT NULL
+        );
+        CREATE TABLE post_topics (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            post_id VARCHAR(36),
+            topic_id VARCHAR(36)
+        );
+        CREATE TABLE mentions (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            user_id VARCHAR(36),
+            post_id VARCHAR(36),
+            round VARCHAR(36),
+            answered INTEGER DEFAULT 0
+        );
+        CREATE TABLE reactions (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            round VARCHAR(36),
+            user_id VARCHAR(36),
+            post_id VARCHAR(36),
+            type TEXT
+        );
+        CREATE TABLE follow (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            user_id VARCHAR(36) NOT NULL,
+            follower_id VARCHAR(36) NOT NULL,
+            round VARCHAR(36),
+            action TEXT
+        );
+        CREATE TABLE sys_messages (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            type TEXT NOT NULL,
+            to_uid VARCHAR(36),
+            message TEXT NOT NULL,
+            from_round VARCHAR(36),
+            duration INTEGER
+        );
+        CREATE TABLE interests (
+            iid VARCHAR(36) PRIMARY KEY NOT NULL,
+            topic TEXT
+        );
+        CREATE TABLE agent_opinion (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            agent_id VARCHAR(36) NOT NULL,
+            tid VARCHAR(36) NOT NULL,
+            topic_id VARCHAR(36) NOT NULL,
+            id_interacted_with VARCHAR(36),
+            id_post VARCHAR(36),
+            opinion REAL NOT NULL,
+            stubborn INTEGER NOT NULL
+        );
+        CREATE TABLE daily_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            p_id VARCHAR(36) NOT NULL,
+            timestamp INTEGER NOT NULL,
+            action_type TEXT NOT NULL,
+            payload TEXT,
+            scheduled_time INTEGER NOT NULL,
+            schedule_day INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            executed_round_id VARCHAR(36)
+        );
+        CREATE TABLE activity_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            p_id VARCHAR(36) NOT NULL,
+            action_type TEXT NOT NULL,
+            target_post_id VARCHAR(36),
+            status TEXT NOT NULL,
+            round_id INTEGER NOT NULL,
+            details TEXT
+        );
+        INSERT INTO rounds (id, day, hour) VALUES ('round-1', 0, 0);
+        INSERT INTO interests (iid, topic) VALUES ('topic-climate', 'Climate');
+        INSERT INTO user_mgmt (
+            id, username, email, password, user_type, owner, round_actions, is_page, activity_profile, daily_activity_level, last_active_day
+        ) VALUES (
+            'agent-1', 'hello_1', 'hello_1@example.org', 'secret', 'moderator', 'experiment', 12, 0, 'Always On', 1, 0
+        );
+        """
+    )
+    connection.commit()
+    return connection
+
+
 def test_executor_persists_post_action(tmp_path: Path) -> None:
     db_path = tmp_path / "simulation.db"
     connection = _build_db(db_path)
@@ -771,6 +898,116 @@ def test_executor_persists_stress_reward_for_directed_propaganda_post(tmp_path: 
     connection.close()
 
 
+def test_set_fixed_agent_opinion_supports_uuid_topic_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation_uuid.db"
+    connection = _build_uuid_hpc_db(db_path)
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+
+    changed = database.set_fixed_agent_opinion(
+        sa_connection,
+        user_id="agent-1",
+        topic_id="topic-climate",
+        opinion=0.75,
+        round_id="round-1",
+    )
+
+    row = sa_connection.execute(
+        text(
+            "SELECT id, agent_id, topic_id, opinion, stubborn "
+            "FROM agent_opinion ORDER BY rowid DESC LIMIT 1"
+        )
+    ).fetchone()
+    assert changed is True
+    assert row is not None
+    assert row[0]
+    assert row[1:] == ("agent-1", "topic-climate", 0.75, 0)
+    sa_connection.close()
+    connection.close()
+
+
+def test_propaganda_agent_supports_uuid_topic_ids_on_hpc_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation_uuid.db"
+    connection = _build_uuid_hpc_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, round_actions, is_page, activity_profile, daily_activity_level, last_active_day, interests, age) "
+        "VALUES ('target-1', 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 8, 0, 'Always On', 1, 0, 'climate', 30)"
+    )
+    connection.execute(
+        "INSERT INTO agent_opinion (id, agent_id, tid, topic_id, id_interacted_with, id_post, opinion, stubborn) "
+        "VALUES ('op-1', 'target-1', 'round-1', 'topic-climate', NULL, NULL, 0.10, 0)"
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    propaganda = PropagandaAgent(
+        settings={
+            "propaganda_campaigns": [
+                {
+                    "topic_id": "topic-climate",
+                    "topic_name": "Climate",
+                    "target_opinion": 0.9,
+                    "target_agent_opinion_group": "Opposed",
+                    "target_agent_opinion_group_bounds": {
+                        "name": "Opposed",
+                        "lower_bound": 0.0,
+                        "upper_bound": 0.2,
+                        "value": 0.1,
+                    },
+                }
+            ],
+            "epsilon": 0.05,
+            "max_interaction_rounds": 4,
+        }
+    )
+    propaganda.setup_database(database, sa_connection)
+    agent = AgentSpec(
+        name="Propaganda One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="propaganda",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id="round-1", day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id="round-1", limit=5),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+
+    actions = propaganda.on_tick(context, agent)
+    assert [action.action_type for action in actions] == ["READ", "CREATE_POST"]
+    assert actions[1].payload["topic_ids"] == ["topic-climate"]
+
+    executor = ActionExecutor(database)
+    executor.execute(sa_connection, context=context, agent=agent, action=actions[1])
+
+    post_topics = sa_connection.execute(
+        text("SELECT topic_id FROM post_topics ORDER BY rowid DESC LIMIT 1")
+    ).fetchone()
+    activity = sa_connection.execute(
+        text("SELECT topic_id FROM propaganda_activity ORDER BY id DESC LIMIT 1")
+    ).fetchone()
+    own_opinion = sa_connection.execute(
+        text(
+            "SELECT topic_id, opinion FROM agent_opinion "
+            "WHERE agent_id = 'agent-1' ORDER BY rowid DESC LIMIT 1"
+        )
+    ).fetchone()
+
+    assert post_topics == ("topic-climate",)
+    assert activity == ("topic-climate",)
+    assert own_opinion == ("topic-climate", 0.9)
+    sa_connection.close()
+    connection.close()
+
+
 def test_stress_attacker_selects_target_and_emits_safe_synthetic_actions(tmp_path: Path) -> None:
     db_path = tmp_path / "simulation.db"
     connection = _build_db(db_path)
@@ -781,6 +1018,9 @@ def test_stress_attacker_selects_target_and_emits_safe_synthetic_actions(tmp_pat
     connection.execute(
         "INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment) "
         "VALUES (1, 'A recent post', 2, -1, NULL, 1, -1, 0, 0)"
+    )
+    connection.execute(
+        "INSERT INTO post_topics (post_id, topic_id) VALUES (1, 1)"
     )
     connection.commit()
 
@@ -831,6 +1071,7 @@ def test_stress_attacker_selects_target_and_emits_safe_synthetic_actions(tmp_pat
     assert actions[2].payload["text"] == (
         "@target_1 Please explain the weakest part of your reasoning."
     )
+    assert actions[2].payload["topic_ids"] == [1]
     assert all(
         action.payload.get("target_user_id") == 2
         for action in actions[1:]
@@ -851,6 +1092,9 @@ def test_stress_attacker_can_generate_llm_critical_comment(tmp_path: Path) -> No
         "INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment) "
         "VALUES (1, 'A recent post', 2, -1, NULL, 1, -1, 0, 0)"
     )
+    connection.execute(
+        "INSERT INTO post_topics (post_id, topic_id) VALUES (1, 1)"
+    )
     connection.commit()
 
     class StubLLM:
@@ -859,7 +1103,10 @@ def test_stress_attacker_can_generate_llm_critical_comment(tmp_path: Path) -> No
         def invoke_text(self, *, system_prompt: str, user_prompt: str) -> str:
             assert system_prompt == "OVERRIDE PROMPT"
             assert "@target_1" in user_prompt
-            return "I don't see evidence for that conclusion."
+            assert "Topic labels: Climate" in user_prompt
+            assert "Visible thread context:" in user_prompt
+            assert "@target_1: A recent post" in user_prompt
+            return "\"@target_1 I don't see evidence for that conclusion.\""
 
     database = ExperimentDatabase(db_path)
     sa_connection = database.connect()
@@ -899,6 +1146,8 @@ def test_stress_attacker_can_generate_llm_critical_comment(tmp_path: Path) -> No
     assert [action.action_type for action in actions] == ["READ", "CREATE_COMMENT"]
     assert actions[1].payload["parent_post_id"] == 1
     assert actions[1].payload["text"].startswith("@target_1 ")
+    assert actions[1].payload["text"] == "@target_1 I don't see evidence for that conclusion."
+    assert actions[1].payload["topic_ids"] == [1]
     assert actions[1].payload["stress_reward"]["tone"] == "critical"
     sa_connection.close()
     connection.close()
@@ -1099,6 +1348,67 @@ def test_executor_infers_comment_exposure_from_thread_size(tmp_path: Path) -> No
     ).scalar_one()
 
     assert stress_value > 0.03
+    sa_connection.close()
+    connection.close()
+
+
+def test_executor_inherits_parent_topics_for_generic_comments(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) "
+        "VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment')"
+    )
+    connection.execute(
+        "INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment) "
+        "VALUES (1, 'Root post', 2, -1, NULL, 1, -1, 0, 0)"
+    )
+    connection.execute(
+        "INSERT INTO post_topics (post_id, topic_id) VALUES (1, 1)"
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    executor = ActionExecutor(database)
+    sa_connection = database.connect()
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=(),
+        recent_posts=(),
+        managed_agents=(),
+    )
+    agent = AgentSpec(
+        name="Comic One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="comic_relief",
+        activity_profile="Always On",
+        daily_budget=12,
+    )
+
+    executor.execute(
+        sa_connection,
+        context=context,
+        agent=agent,
+        action=AgentAction(
+            agent_type="comic_relief",
+            action_type="CREATE_COMMENT",
+            payload={
+                "parent_post_id": 1,
+                "text": "@target_1 That take landed like a PowerPoint in a thunderstorm.",
+            },
+        ),
+    )
+
+    assert sa_connection.execute(
+        text("SELECT thread_id FROM post WHERE id = 2")
+    ).scalar_one() == 1
+    assert sa_connection.execute(
+        text("SELECT topic_id FROM post_topics WHERE post_id = 2")
+    ).scalar_one() == 1
     sa_connection.close()
     connection.close()
 
@@ -2751,5 +3061,70 @@ def test_mop_minimal_experiment_executes_post_expand_and_boost(tmp_path: Path) -
         text("select count(*) from agent_opinion where topic_id = 1 and opinion = 0.8 and agent_id in (select p_id from puppet_registry)")
     ).scalar_one() == 2
 
+    sa_connection.close()
+    connection.close()
+
+
+def test_mop_supports_uuid_topic_ids_on_hpc_schema(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation_uuid.db"
+    connection = _build_uuid_hpc_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, round_actions, is_page, activity_profile, daily_activity_level, last_active_day, interests, age, leaning) "
+        "VALUES ('target-1', 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 8, 0, 'Always On', 1, 0, 'Climate', 30, 'Center')"
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    mop = MasterOfPuppetsAgent(
+        settings={
+            "puppet_count": 1,
+            "post_budget_percentage": 100,
+            "support_budget_percentage": 0,
+            "network_budget_percentage": 0,
+            "boost_lookback_hours": 12,
+            "mop_campaigns": [
+                {
+                    "topic_id": "topic-climate",
+                    "topic_name": "Climate",
+                    "target_opinion": 0.8,
+                    "target_opinion_group": "Supportive",
+                }
+            ],
+        },
+        llm_client=_FakeLLM(),
+    )
+    mop.setup_database(database, sa_connection)
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id="round-1", day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id="round-1", limit=20),
+        managed_agents=(),
+        connection=sa_connection,
+    )
+    agent = AgentSpec(
+        name="MoP One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="master_of_puppets",
+        activity_profile="Always On",
+        daily_budget=4,
+    )
+
+    actions = mop.on_tick(context, agent)
+
+    assert any(action.action_type == "CREATE_POST" for action in actions)
+    assert sa_connection.execute(
+        text("select count(*) from puppet_registry")
+    ).scalar_one() == 1
+    assert sa_connection.execute(
+        text(
+            "select count(*) from agent_opinion "
+            "where topic_id = 'topic-climate' and agent_id in (select p_id from puppet_registry)"
+        )
+    ).scalar_one() == 1
     sa_connection.close()
     connection.close()

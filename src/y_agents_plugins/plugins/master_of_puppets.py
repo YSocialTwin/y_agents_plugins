@@ -348,7 +348,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                     puppet_id=puppet_id,
                     target_user=target_user,
                 ),
-                "topic_ids": [int(campaign["runtime_topic_id"])],
+                "topic_ids": [campaign["runtime_topic_id"]],
                 "target_user_id": None if target_user is None else target_user.id,
             }
         if action_type == "expand":
@@ -483,7 +483,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                         "schedule_id": int(schedule_id),
                         "action_type": "post",
                         "details": {
-                            "campaign_topic_id": int((payload.get("campaign") or {}).get("runtime_topic_id", -1)),
+                            "campaign_topic_id": (payload.get("campaign") or {}).get("runtime_topic_id"),
                             "target_user_id": payload.get("target_user_id"),
                         },
                     },
@@ -548,7 +548,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                     "acting_username": puppet.username,
                     "post_id": sibling_post.id,
                     "text": str(sibling_post.text),
-                    "topic_ids": [int(campaign["runtime_topic_id"])],
+                    "topic_ids": [campaign["runtime_topic_id"]],
                     "stress_reward": {
                         "tone": "positive",
                         "action": "share:positive",
@@ -637,7 +637,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                 current = self.database.get_latest_agent_opinion(
                     context.connection,
                     user_id=user.id,
-                    topic_id=int(campaign["runtime_topic_id"]),
+                    topic_id=campaign["runtime_topic_id"],
                     current_round_id=context.current_round.id,
                 )
                 if current is None:
@@ -831,7 +831,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                 self.database.set_fixed_agent_opinion(
                     context.connection,
                     user_id=puppet_id,
-                    topic_id=int(campaign["runtime_topic_id"]),
+                    topic_id=campaign["runtime_topic_id"],
                     opinion=float(target_opinion),
                     round_id=context.current_round.id,
                 )
@@ -845,13 +845,13 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         for campaign in campaigns:
             runtime_topic_id = self.database.resolve_interest_topic_id(
                 context.connection,
-                configured_topic_id=int(campaign["topic_id"]),
+                configured_topic_id=campaign["topic_id"],
                 topic_name=str(campaign["topic_name"]),
             )
             if runtime_topic_id is None:
                 continue
             resolved_campaign = dict(campaign)
-            resolved_campaign["runtime_topic_id"] = int(runtime_topic_id)
+            resolved_campaign["runtime_topic_id"] = runtime_topic_id
             resolved.append(resolved_campaign)
         return resolved
 
@@ -866,8 +866,8 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                 continue
             normalized.append(
                 {
-                    "topic_id": int(topic_id),
-                    "runtime_topic_id": int(topic_id),
+                    "topic_id": topic_id,
+                    "runtime_topic_id": topic_id,
                     "topic_name": str(campaign.get("topic_name") or topic_id),
                     "target_opinion": (
                         None

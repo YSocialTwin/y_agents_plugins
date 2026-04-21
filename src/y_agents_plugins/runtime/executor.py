@@ -280,7 +280,7 @@ class ActionExecutor:
             thread_id=thread_id,
             discussion_round_id=activity["discussion_round_id"],
             target_opinion=activity.get("target_opinion"),
-            topic_id=int(activity["topic_id"]),
+            topic_id=activity["topic_id"],
         )
 
     def _persist_mop_activity(
@@ -696,14 +696,14 @@ class ActionExecutor:
         return user_type not in self._UNTRACKED_PLUGIN_USER_TYPES
 
     @staticmethod
-    def _topic_ids_from_action(action: AgentAction) -> list[int]:
+    def _topic_ids_from_action(action: AgentAction) -> list[Any]:
         explicit = action.payload.get("topic_ids")
         if isinstance(explicit, (list, tuple)):
-            return [int(topic_id) for topic_id in explicit if topic_id not in (None, "")]
+            return [topic_id for topic_id in explicit if topic_id not in (None, "")]
         activity = action.payload.get("propaganda_activity")
         if not isinstance(activity, dict):
             return []
         topic_id = activity.get("topic_id")
         if topic_id in (None, ""):
             return []
-        return [int(topic_id)]
+        return [topic_id]
