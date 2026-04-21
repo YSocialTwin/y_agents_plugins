@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any
 
-from sqlalchemy import Column, Integer, MetaData, REAL, Table
+from sqlalchemy import Column, Integer, MetaData, REAL, String, Table
 
 from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec, PostRecord, UserRecord
 from y_agents_plugins.plugins.base import BaseAgentPlugin
@@ -59,14 +59,15 @@ class PropagandaAgent(BaseAgentPlugin):
     def setup_database(self, database, connection) -> None:
         super().setup_database(database, connection)
         metadata = MetaData()
+        id_type = database._id_sql_type(connection)
         propaganda_activity = Table(
             "propaganda_activity",
             metadata,
             Column("id", Integer, primary_key=True, autoincrement=True),
-            Column("target_uid", Integer, nullable=False),
-            Column("propaganda_agent_uid", Integer, nullable=False),
-            Column("thread_id", Integer, nullable=False),
-            Column("discussion_round_id", Integer, nullable=False),
+            Column("target_uid", id_type, nullable=False),
+            Column("propaganda_agent_uid", id_type, nullable=False),
+            Column("thread_id", id_type, nullable=False),
+            Column("discussion_round_id", id_type, nullable=False),
             Column("target_opinion", REAL, nullable=True),
             Column("topic_id", Integer, nullable=False),
         )
@@ -103,7 +104,7 @@ class PropagandaAgent(BaseAgentPlugin):
         remaining_budget = self._remaining_daily_budget(context, agent, propaganda_uid)
         actions: list[AgentAction] = [self._read_action(context, agent)]
         unresolved_threads = []
-        active_target_ids: set[int] = set()
+        active_target_ids: set[str] = set()
 
         for thread in active_threads:
             if self._thread_has_ended(
@@ -115,7 +116,7 @@ class PropagandaAgent(BaseAgentPlugin):
             ):
                 continue
             unresolved_threads.append(thread)
-            active_target_ids.add(int(thread["target_uid"]))
+            active_target_ids.add(str(thread["target_uid"]))
 
         for thread in unresolved_threads[:max_targets]:
             if remaining_budget <= 0:
@@ -146,8 +147,8 @@ class PropagandaAgent(BaseAgentPlugin):
             activity = opening.payload.get("propaganda_activity") or {}
             target_uid = activity.get("target_uid")
             if target_uid is not None:
-                active_target_ids.add(int(target_uid))
-            unresolved_threads.append({"target_uid": int(target_uid or -1)})
+                active_target_ids.add(str(target_uid))
+            unresolved_threads.append({"target_uid": target_uid})
 
         if len(actions) == 1:
             return [self._read_action(context, agent)]
@@ -158,9 +159,9 @@ class PropagandaAgent(BaseAgentPlugin):
         *,
         context: AgentContext,
         agent: AgentSpec,
-        propaganda_uid: int,
+        propaganda_uid: Any,
         campaigns: list[dict[str, Any]],
-        excluded_target_ids: set[int],
+        excluded_target_ids: set[str],
     ) -> AgentAction | None:
         candidate = self._select_target_candidate(
             context=context,
@@ -186,13 +187,13 @@ class PropagandaAgent(BaseAgentPlugin):
                 "stress_reward": {
                     "tone": "positive",
                     "action": "post:positive",
-                    "target_user_id": int(candidate["target_uid"]),
+                    "target_user_id": candidate["target_uid"],
                 },
                 "propaganda_activity": {
-                    "target_uid": int(candidate["target_uid"]),
+                    "target_uid": candidate["target_uid"],
                     "topic_id": int(candidate["campaign"]["runtime_topic_id"]),
                     "target_opinion": float(candidate["current_opinion"]),
-                    "discussion_round_id": int(context.current_round.id),
+                    "discussion_round_id": context.current_round.id,
                 },
             },
         )
@@ -203,7 +204,7 @@ class PropagandaAgent(BaseAgentPlugin):
         context: AgentContext,
         agent: AgentSpec,
         campaigns: list[dict[str, Any]],
-        active_thread: dict[str, int | float | None],
+        active_thread: dict[str, Any],
     ) -> AgentAction | None:
         campaign = self._campaign_for_topic(
             campaigns, int(active_thread["topic_id"])
@@ -212,24 +213,24 @@ class PropagandaAgent(BaseAgentPlugin):
             return None
         current_opinion = self.database.get_latest_agent_opinion(
             context.connection,
-            user_id=int(active_thread["target_uid"]),
+            user_id=active_thread["target_uid"],
             topic_id=int(active_thread["topic_id"]),
-            current_round_id=int(context.current_round.id),
+            current_round_id=context.current_round.id,
         )
         latest_target_reply = self.database.get_latest_thread_post_by_user(
             context.connection,
-            thread_id=int(active_thread["thread_id"]),
-            user_id=int(active_thread["target_uid"]),
-            after_round_id=int(active_thread["discussion_round_id"]),
+            thread_id=active_thread["thread_id"],
+            user_id=active_thread["target_uid"],
+            after_round_id=active_thread["discussion_round_id"],
         )
         if latest_target_reply is None:
             return None
         thread_posts = self.database.get_thread_posts(
             context.connection,
-            thread_id=int(active_thread["thread_id"]),
+            thread_id=active_thread["thread_id"],
             limit=20,
         )
-        target_user = self._user_by_id(int(active_thread["target_uid"]), users=context.users)
+        target_user = self._user_by_id(active_thread["target_uid"], users=context.users)
         previous_opinion = active_thread.get("target_opinion")
         observed_change = None
         if previous_opinion is not None and current_opinion is not None:
@@ -247,8 +248,8 @@ class PropagandaAgent(BaseAgentPlugin):
             agent_type=self.agent_type,
             action_type="CREATE_COMMENT",
             payload={
-                "parent_post_id": int(latest_target_reply.id),
-                "thread_id": int(active_thread["thread_id"]),
+                "parent_post_id": latest_target_reply.id,
+                "thread_id": active_thread["thread_id"],
                 "text": message,
                 "topic_ids": [int(active_thread["topic_id"])],
                 "stress_reward": {
@@ -256,11 +257,11 @@ class PropagandaAgent(BaseAgentPlugin):
                     "action": "comment:positive",
                 },
                 "propaganda_activity": {
-                    "target_uid": int(active_thread["target_uid"]),
+                    "target_uid": active_thread["target_uid"],
                     "topic_id": int(active_thread["topic_id"]),
                     "target_opinion": current_opinion,
-                    "discussion_round_id": int(context.current_round.id),
-                    "thread_id": int(active_thread["thread_id"]),
+                    "discussion_round_id": context.current_round.id,
+                    "thread_id": active_thread["thread_id"],
                 },
             },
         )
@@ -269,10 +270,10 @@ class PropagandaAgent(BaseAgentPlugin):
         self,
         *,
         context: AgentContext,
-        propaganda_uid: int,
+        propaganda_uid: Any,
         settings: dict[str, Any],
         campaigns: list[dict[str, Any]],
-        active_thread: dict[str, int | float | None],
+        active_thread: dict[str, Any],
     ) -> bool:
         campaign = self._campaign_for_topic(
             campaigns, int(active_thread["topic_id"])
@@ -281,9 +282,9 @@ class PropagandaAgent(BaseAgentPlugin):
             return True
         current_opinion = self.database.get_latest_agent_opinion(
             context.connection,
-            user_id=int(active_thread["target_uid"]),
+            user_id=active_thread["target_uid"],
             topic_id=int(active_thread["topic_id"]),
-            current_round_id=int(context.current_round.id),
+            current_round_id=context.current_round.id,
         )
         if current_opinion is not None and self._target_reached(
             current=float(current_opinion),
@@ -294,16 +295,16 @@ class PropagandaAgent(BaseAgentPlugin):
         return self.database.count_propaganda_actions_for_thread(
             context.connection,
             propaganda_agent_uid=propaganda_uid,
-            thread_id=int(active_thread["thread_id"]),
+            thread_id=active_thread["thread_id"],
         ) >= int(settings.get("max_interaction_rounds", 4))
 
     def _select_target_candidate(
         self,
         *,
         context: AgentContext,
-        propaganda_uid: int,
+        propaganda_uid: Any,
         campaigns: list[dict[str, Any]],
-        excluded_target_ids: set[int],
+        excluded_target_ids: set[str],
     ) -> dict[str, Any] | None:
         managed_usernames = {managed_agent.username for managed_agent in context.managed_agents}
         candidates: list[dict[str, Any]] = []
@@ -311,13 +312,13 @@ class PropagandaAgent(BaseAgentPlugin):
             latest = self.database.get_latest_opinions_for_topic(
                 context.connection,
                 topic_id=int(campaign["runtime_topic_id"]),
-                current_round_id=int(context.current_round.id),
+                current_round_id=context.current_round.id,
             )
             for row in latest:
-                user_id = int(row["user_id"])
-                if user_id == propaganda_uid:
+                user_id = row["user_id"]
+                if str(user_id) == str(propaganda_uid):
                     continue
-                if user_id in excluded_target_ids:
+                if str(user_id) in excluded_target_ids:
                     continue
                 user = self._safe_user_by_id(user_id, users=context.users)
                 if user is None:
@@ -346,7 +347,7 @@ class PropagandaAgent(BaseAgentPlugin):
                 )
         if not candidates:
             return None
-        return max(candidates, key=lambda item: (item["gap"], -item["target_uid"]))
+        return max(candidates, key=lambda item: (item["gap"], str(item["target_uid"])))
 
     def _build_initial_message(
         self,
@@ -459,7 +460,7 @@ class PropagandaAgent(BaseAgentPlugin):
         self,
         context: AgentContext,
         agent: AgentSpec,
-        propaganda_uid: int,
+        propaganda_uid: Any,
     ) -> int:
         daily_budget = max(0, int(float(agent.daily_budget)))
         if daily_budget <= 0:
@@ -487,10 +488,10 @@ class PropagandaAgent(BaseAgentPlugin):
                 continue
             self.database.set_fixed_agent_opinion(
                 context.connection,
-                user_id=int(propaganda_uid),
+                user_id=propaganda_uid,
                 topic_id=int(runtime_topic_id),
                 opinion=float(target_opinion),
-                round_id=int(context.current_round.id),
+                round_id=context.current_round.id,
             )
 
     def _campaigns(self, settings: dict[str, Any]) -> list[dict[str, Any]]:
@@ -615,7 +616,7 @@ class PropagandaAgent(BaseAgentPlugin):
             settings.update(agent.parameters or {})
         return settings
 
-    def _user_by_id(self, user_id: int, *, users: tuple[UserRecord, ...]) -> UserRecord:
+    def _user_by_id(self, user_id: Any, *, users: tuple[UserRecord, ...]) -> UserRecord:
         user = self._safe_user_by_id(user_id, users=users)
         if user is None:
             raise RuntimeError(f"User '{user_id}' not found in AgentContext.users")
@@ -623,9 +624,9 @@ class PropagandaAgent(BaseAgentPlugin):
 
     @staticmethod
     def _safe_user_by_id(
-        user_id: int, *, users: tuple[UserRecord, ...]
+        user_id: Any, *, users: tuple[UserRecord, ...]
     ) -> UserRecord | None:
         for user in users:
-            if int(user.id) == int(user_id):
+            if str(user.id) == str(user_id):
                 return user
         return None

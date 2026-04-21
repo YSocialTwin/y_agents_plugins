@@ -175,8 +175,16 @@ def test_executor_persists_post_action(tmp_path: Path) -> None:
     count = database.count_posts_by_username_and_text(
         sa_connection, username="hello_1", text="HELLO WORLD"
     )
+    actor_id = database.get_user_id(sa_connection, "hello_1")
+    row = sa_connection.execute(
+        text("SELECT comment_to, thread_id FROM post WHERE user_id = :user_id AND tweet = 'HELLO WORLD'"),
+        {"user_id": actor_id},
+    ).mappings().first()
 
     assert count == 1
+    assert row is not None
+    assert int(row["comment_to"]) == -1
+    assert int(row["thread_id"]) > 0
     sa_connection.close()
     connection.close()
 

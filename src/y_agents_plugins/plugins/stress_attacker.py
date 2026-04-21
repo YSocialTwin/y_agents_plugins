@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Column, Integer, MetaData, Table, select
+from sqlalchemy import Column, Integer, MetaData, String, Table, select
 
 from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec, PostRecord, UserRecord
 from y_agents_plugins.plugins.base import BaseAgentPlugin
@@ -24,11 +24,12 @@ class StressAttackerAgent(BaseAgentPlugin):
     def setup_database(self, database, connection) -> None:
         super().setup_database(database, connection)
         metadata = MetaData()
+        id_type = database._id_sql_type(connection)
         campaign_state = Table(
             "stress_attacker_campaigns",
             metadata,
-            Column("attacker_uid", Integer, primary_key=True),
-            Column("target_uid", Integer, nullable=True),
+            Column("attacker_uid", id_type, primary_key=True),
+            Column("target_uid", id_type, nullable=True),
             Column("burst_started_round", Integer, nullable=True),
             Column("cooldown_until_round", Integer, nullable=True),
         )
@@ -62,7 +63,7 @@ class StressAttackerAgent(BaseAgentPlugin):
         source_count = max(1, int(settings.get("source_count", 3) or 3))
         recent_posts = self._candidate_posts_for_target(
             context=context,
-            target_user_id=int(target_user.id),
+            target_user_id=target_user.id,
             lookback_rounds=max(1, int(settings.get("post_lookback_rounds", 24) or 24)),
         )
         target_post = recent_posts[0] if recent_posts else None
@@ -73,7 +74,7 @@ class StressAttackerAgent(BaseAgentPlugin):
                     agent_type=self.agent_type,
                     action_type="APPLY_STRESS_EVENT",
                     payload={
-                        "target_user_id": int(target_user.id),
+                        "target_user_id": target_user.id,
                         "family": "reaction",
                         "subtype": "dislike",
                         "action_name": "synthetic_reaction:dislike_burst",
@@ -82,7 +83,7 @@ class StressAttackerAgent(BaseAgentPlugin):
                             int(settings.get("reaction_burst_volume", source_count) or source_count),
                         ),
                         "source_count": source_count,
-                        "target_post_id": int(target_post.id),
+                        "target_post_id": target_post.id,
                     },
                 )
             )
@@ -99,8 +100,8 @@ class StressAttackerAgent(BaseAgentPlugin):
                         agent_type=self.agent_type,
                         action_type="CREATE_COMMENT",
                         payload={
-                            "parent_post_id": int(surfaced_post.id),
-                            "thread_id": int(surfaced_post.thread_id or surfaced_post.id),
+                            "parent_post_id": surfaced_post.id,
+                            "thread_id": surfaced_post.thread_id or surfaced_post.id,
                             "text": (
                                 self._build_critical_comment(
                                     agent=agent,
@@ -126,15 +127,15 @@ class StressAttackerAgent(BaseAgentPlugin):
                         agent_type=self.agent_type,
                         action_type="APPLY_STRESS_EVENT",
                         payload={
-                            "target_user_id": int(target_user.id),
-                        "family": "comment",
-                        "subtype": "critical",
-                        "action_name": "synthetic_comment:critical",
-                        "source_count": source_count,
-                        "source_post_id": (int(surfaced_post.id) if surfaced_post is not None else None),
-                    },
+                            "target_user_id": target_user.id,
+                            "family": "comment",
+                            "subtype": "critical",
+                            "action_name": "synthetic_comment:critical",
+                            "source_count": source_count,
+                            "source_post_id": (surfaced_post.id if surfaced_post is not None else None),
+                        },
+                    )
                 )
-            )
             remaining_budget -= 1
 
         if remaining_budget > 0 and self._enabled(settings, "report_burst_enabled") and target_post is not None:
@@ -147,8 +148,8 @@ class StressAttackerAgent(BaseAgentPlugin):
                     agent_type=self.agent_type,
                     action_type="REPORT_POST",
                     payload={
-                        "post_id": int(target_post.id),
-                        "target_user_id": int(target_user.id),
+                        "post_id": target_post.id,
+                        "target_user_id": target_user.id,
                         "report_type": "synthetic_pressure",
                         "source_count": report_volume,
                         "action_name": "report:pressure",
@@ -160,13 +161,13 @@ class StressAttackerAgent(BaseAgentPlugin):
                     agent_type=self.agent_type,
                     action_type="APPLY_STRESS_EVENT",
                     payload={
-                        "target_user_id": int(target_user.id),
+                        "target_user_id": target_user.id,
                         "family": "report",
                         "subtype": "mass_report",
                         "action_name": "report:pressure",
                         "volume": report_volume,
                         "source_count": report_volume,
-                        "target_post_id": int(target_post.id),
+                        "target_post_id": target_post.id,
                     },
                 )
             )
@@ -178,20 +179,20 @@ class StressAttackerAgent(BaseAgentPlugin):
         self,
         *,
         context: AgentContext,
-        attacker_uid: int,
+        attacker_uid: Any,
         settings: dict[str, Any],
     ) -> UserRecord | None:
         state = self._load_campaign_state(context, attacker_uid=attacker_uid)
-        current_round = int(context.current_round.id)
+        current_round = context.current_round.ordinal
         burst_rounds = max(1, int(settings.get("burst_rounds", 4) or 4))
         if state is not None:
             target_uid = state.get("target_uid")
             burst_started_round = int(state.get("burst_started_round") or 0)
             cooldown_until_round = int(state.get("cooldown_until_round") or 0)
             if target_uid and burst_started_round > 0 and current_round <= burst_started_round + burst_rounds - 1:
-                target = self._user_by_id(int(target_uid), users=context.users)
+                target = self._user_by_id(target_uid, users=context.users)
                 if target is not None and not self.database.user_is_banned(
-                    context.connection, user_id=int(target.id)
+                    context.connection, user_id=target.id
                 ):
                     return target
             if cooldown_until_round > current_round:
@@ -206,7 +207,7 @@ class StressAttackerAgent(BaseAgentPlugin):
         self._store_campaign_state(
             context=context,
             attacker_uid=attacker_uid,
-            target_uid=(int(target.id) if target is not None else None),
+            target_uid=(target.id if target is not None else None),
             burst_started_round=(current_round if target is not None else None),
             cooldown_until_round=(
                 current_round + burst_rounds + cooldown_rounds if target is not None else current_round + cooldown_rounds
@@ -218,29 +219,29 @@ class StressAttackerAgent(BaseAgentPlugin):
         self,
         *,
         context: AgentContext,
-        attacker_uid: int,
+        attacker_uid: Any,
         settings: dict[str, Any],
     ) -> UserRecord | None:
         candidates = []
         for user in context.users:
-            if int(user.id) == int(attacker_uid):
+            if str(user.id) == str(attacker_uid):
                 continue
             user_type = str(user.user_type or "").strip().lower()
             if user_type in {"stress_attacker", "hello_world", "moderator", "propaganda", "master_of_puppets", "mop_puppet"}:
                 continue
-            if self.database.user_is_banned(context.connection, user_id=int(user.id)):
+            if self.database.user_is_banned(context.connection, user_id=user.id):
                 continue
             if not self._matches_demographics(user, settings):
                 continue
             recent_posts = self._candidate_posts_for_target(
                 context=context,
-                target_user_id=int(user.id),
+                target_user_id=user.id,
                 lookback_rounds=max(1, int(settings.get("post_lookback_rounds", 24) or 24)),
             )
             score = (
                 len(recent_posts),
                 int(user.profile.get("age") or 0),
-                -int(user.id),
+                -sum(ord(ch) for ch in str(user.id)),
             )
             candidates.append((score, user))
         if not candidates:
@@ -347,27 +348,27 @@ class StressAttackerAgent(BaseAgentPlugin):
         self,
         *,
         context: AgentContext,
-        target_user_id: int,
+        target_user_id: Any,
         lookback_rounds: int,
     ) -> tuple[PostRecord, ...]:
-        min_round_id = max(1, int(context.current_round.id) - max(0, int(lookback_rounds)))
+        min_round_id = max(0, context.current_round.ordinal - max(0, int(lookback_rounds)))
         posts = self.database.get_posts_by_author_ids_since_round(
             context.connection,
-            author_ids=[int(target_user_id)],
+            author_ids=[target_user_id],
             min_round_id=min_round_id,
             limit=100,
         )
         filtered = [
             post for post in posts if not int(post.is_moderation_comment or 0)
         ]
-        filtered.sort(key=lambda post: (int(post.round_id), int(post.id)), reverse=True)
+        filtered.sort(key=lambda post: (post.round_ordinal, str(post.id)), reverse=True)
         return tuple(filtered)
 
     def _remaining_daily_budget(
         self,
         *,
         context: AgentContext,
-        attacker_uid: int,
+        attacker_uid: Any,
         daily_budget: float,
     ) -> int:
         daily_budget = max(0, int(float(daily_budget or 0)))
@@ -377,7 +378,7 @@ class StressAttackerAgent(BaseAgentPlugin):
             context.connection,
             table_name="activity_logs",
             user_column="p_id",
-            user_id=int(attacker_uid),
+            user_id=attacker_uid,
             day=int(context.current_round.day),
         )
         return max(0, daily_budget - used_today)
@@ -386,16 +387,16 @@ class StressAttackerAgent(BaseAgentPlugin):
         self,
         context: AgentContext,
         *,
-        attacker_uid: int,
-    ) -> dict[str, int | None] | None:
+        attacker_uid: Any,
+    ) -> dict[str, Any] | None:
         table = self.database.table("stress_attacker_campaigns")
         row = context.connection.execute(
-            select(table).where(table.c.attacker_uid == int(attacker_uid)).limit(1)
+            select(table).where(table.c.attacker_uid == str(attacker_uid)).limit(1)
         ).mappings().first()
         if row is None:
             return None
         return {
-            "target_uid": None if row["target_uid"] is None else int(row["target_uid"]),
+            "target_uid": row["target_uid"],
             "burst_started_round": (
                 None if row["burst_started_round"] is None else int(row["burst_started_round"])
             ),
@@ -408,26 +409,26 @@ class StressAttackerAgent(BaseAgentPlugin):
         self,
         context: AgentContext,
         *,
-        attacker_uid: int,
-        target_uid: int | None,
+        attacker_uid: Any,
+        target_uid: Any | None,
         burst_started_round: int | None,
         cooldown_until_round: int | None,
     ) -> None:
         table = self.database.table("stress_attacker_campaigns")
         existing = context.connection.execute(
-            select(table.c.attacker_uid).where(table.c.attacker_uid == int(attacker_uid)).limit(1)
+            select(table.c.attacker_uid).where(table.c.attacker_uid == str(attacker_uid)).limit(1)
         ).first()
         values = {
-            "target_uid": target_uid,
+            "target_uid": None if target_uid is None else str(target_uid),
             "burst_started_round": burst_started_round,
             "cooldown_until_round": cooldown_until_round,
         }
         if existing is None:
-            values["attacker_uid"] = int(attacker_uid)
+            values["attacker_uid"] = str(attacker_uid)
             context.connection.execute(table.insert().values(**values))
         else:
             context.connection.execute(
-                table.update().where(table.c.attacker_uid == int(attacker_uid)).values(**values)
+                table.update().where(table.c.attacker_uid == str(attacker_uid)).values(**values)
             )
         context.connection.commit()
 
@@ -454,13 +455,13 @@ class StressAttackerAgent(BaseAgentPlugin):
         return settings
 
     @staticmethod
-    def _safe_user_by_id(user_id: int, *, users: tuple[UserRecord, ...]) -> UserRecord | None:
+    def _safe_user_by_id(user_id: Any, *, users: tuple[UserRecord, ...]) -> UserRecord | None:
         for user in users:
-            if int(user.id) == int(user_id):
+            if str(user.id) == str(user_id):
                 return user
         return None
 
-    def _user_by_id(self, user_id: int, *, users: tuple[UserRecord, ...]) -> UserRecord:
+    def _user_by_id(self, user_id: Any, *, users: tuple[UserRecord, ...]) -> UserRecord:
         user = self._safe_user_by_id(user_id, users=users)
         if user is None:
             raise RuntimeError(f"User '{user_id}' not found in AgentContext.users")

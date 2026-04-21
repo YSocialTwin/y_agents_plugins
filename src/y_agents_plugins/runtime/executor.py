@@ -78,7 +78,7 @@ class ActionExecutor:
                 username=actor_username,
                 text=str(action.payload["text"]),
                 round_id=context.current_round.id,
-                parent_post_id=int(action.payload["parent_post_id"]),
+                parent_post_id=action.payload["parent_post_id"],
                 topic_ids=self._topic_ids_from_action(action),
             )
             self._persist_mop_activity(
@@ -100,8 +100,8 @@ class ActionExecutor:
                 action=action,
             )
         elif action.action_type == "APPLY_MODERATION":
-            round_id = int(action.payload.get("round_id", context.current_round.id))
-            target_user_id = int(action.payload["target_user_id"])
+            round_id = action.payload.get("round_id", context.current_round.id)
+            target_user_id = action.payload["target_user_id"]
             system_message_id = self.database.create_system_message(
                 connection,
                 message_type=str(action.payload["message_type"]),
@@ -115,17 +115,17 @@ class ActionExecutor:
                 username=agent.username,
                 text=str(action.payload["system_message_text"]),
                 round_id=round_id,
-                parent_post_id=int(action.payload["post_id"]),
+                parent_post_id=action.payload["post_id"],
                 is_moderation_comment=True,
             )
             self.database.mark_post_moderated(
                 connection,
-                post_id=int(action.payload["post_id"]),
+                post_id=action.payload["post_id"],
             )
             self.database.insert_moderation_event(
                 connection,
                 moderator_username=agent.username,
-                moderated_post_id=int(action.payload["post_id"]),
+                moderated_post_id=action.payload["post_id"],
                 moderation_type=str(action.payload["reason"]),
                 round_id=round_id,
                 generated_comment_id=moderation_comment_id,
@@ -160,7 +160,7 @@ class ActionExecutor:
             created = self.database.create_follow(
                 connection,
                 username=actor_username,
-                target_user_id=int(action.payload["target_user_id"]),
+                target_user_id=action.payload["target_user_id"],
                 round_id=context.current_round.id,
                 action=str(action.payload.get("follow_action") or "follow"),
             )
@@ -176,14 +176,14 @@ class ActionExecutor:
             reaction_id = self.database.create_reaction(
                 connection,
                 username=actor_username,
-                post_id=int(action.payload["post_id"]),
+                post_id=action.payload["post_id"],
                 reaction_type=str(action.payload.get("reaction_type") or "like"),
                 round_id=context.current_round.id,
             )
             self._persist_mop_activity(
                 connection,
                 actor_username=actor_username,
-                created_post_id=int(action.payload["post_id"]),
+                created_post_id=action.payload["post_id"],
                 action=action,
                 round_id=context.current_round.id,
                 status="executed" if reaction_id is not None else "skipped",
@@ -198,8 +198,8 @@ class ActionExecutor:
             reports_written = self.database.create_report(
                 connection,
                 username=actor_username,
-                post_id=int(action.payload["post_id"]),
-                round_id=int(context.current_round.id),
+                post_id=action.payload["post_id"],
+                round_id=context.current_round.id,
                 report_type=str(action.payload.get("report_type") or "synthetic_pressure"),
                 count=max(1, int(action.payload.get("source_count", 1) or 1)),
             )
@@ -207,7 +207,7 @@ class ActionExecutor:
                 connection,
                 actor_username=actor_username,
                 action_type=str(action.payload.get("action_name") or "report_post"),
-                target_post_id=int(action.payload["post_id"]),
+                target_post_id=action.payload["post_id"],
                 round_id=context.current_round.id,
                 status="executed" if reports_written > 0 else "skipped",
                 details={
@@ -219,7 +219,7 @@ class ActionExecutor:
             share_id = self.database.create_share(
                 connection,
                 username=actor_username,
-                shared_post_id=int(action.payload["post_id"]),
+                shared_post_id=action.payload["post_id"],
                 text=str(action.payload.get("text") or ""),
                 round_id=context.current_round.id,
                 topic_ids=self._topic_ids_from_action(action),
@@ -247,7 +247,7 @@ class ActionExecutor:
                 actor_username=actor_username,
                 action_type=str(action.payload.get("action_name") or "apply_stress_event"),
                 target_post_id=(
-                    int(action.payload["target_post_id"])
+                    action.payload["target_post_id"]
                     if action.payload.get("target_post_id") not in (None, "")
                     else None
                 ),
@@ -265,20 +265,20 @@ class ActionExecutor:
         connection,
         *,
         agent: AgentSpec,
-        created_post_id: int,
+        created_post_id: Any,
         action: AgentAction,
     ) -> None:
         activity = action.payload.get("propaganda_activity")
         if not isinstance(activity, dict):
             return
         propaganda_agent_uid = self.database.get_user_id(connection, agent.username)
-        thread_id = int(activity.get("thread_id") or created_post_id)
+        thread_id = activity.get("thread_id") or created_post_id
         self.database.insert_propaganda_activity(
             connection,
-            target_uid=int(activity["target_uid"]),
+            target_uid=activity["target_uid"],
             propaganda_agent_uid=propaganda_agent_uid,
             thread_id=thread_id,
-            discussion_round_id=int(activity["discussion_round_id"]),
+            discussion_round_id=activity["discussion_round_id"],
             target_opinion=activity.get("target_opinion"),
             topic_id=int(activity["topic_id"]),
         )
@@ -288,9 +288,9 @@ class ActionExecutor:
         connection,
         *,
         actor_username: str,
-        created_post_id: int | None,
+        created_post_id: Any | None,
         action: AgentAction,
-        round_id: int,
+        round_id: Any,
         status: str = "executed",
     ) -> None:
         activity = action.payload.get("mop_activity")
@@ -301,30 +301,31 @@ class ActionExecutor:
             schedules = self.database.table("daily_schedules")
             connection.execute(
                 schedules.update()
-                .where(schedules.c.id == int(schedule_id))
-                .values(status=str(status), executed_round_id=int(round_id))
+                .where(schedules.c.id == schedule_id)
+                .values(status=str(status), executed_round_id=round_id)
             )
         if self.database.has_table(connection, "activity_logs"):
             logs = self.database.table("activity_logs")
             actor_id = self.database.get_user_id(connection, actor_username)
             details = dict(activity.get("details") or {})
             if created_post_id is not None:
-                details.setdefault("created_post_id", int(created_post_id))
+                details.setdefault("created_post_id", created_post_id)
+            log_round_id = self.database._round_ordinal_for_id(connection, round_id)
             connection.execute(
                 logs.insert().values(
-                    p_id=int(actor_id),
+                    p_id=actor_id,
                     action_type=str(activity.get("action_type") or action.action_type.lower()),
                     target_post_id=(
-                        int(activity["target_post_id"])
+                        activity["target_post_id"]
                         if activity.get("target_post_id") not in (None, "")
                         else (
-                            int(created_post_id)
+                            created_post_id
                             if created_post_id is not None and action.action_type in {"CREATE_POST", "CREATE_COMMENT", "SHARE_POST"}
                             else None
                         )
                     ),
                     status=str(status),
-                    round_id=int(round_id),
+                    round_id=log_round_id,
                     details=str(details),
                 )
             )
@@ -336,8 +337,8 @@ class ActionExecutor:
         *,
         actor_username: str,
         action_type: str,
-        round_id: int,
-        target_post_id: int | None = None,
+        round_id: Any,
+        target_post_id: Any | None = None,
         status: str = "executed",
         details: dict[str, Any] | None = None,
     ) -> None:
@@ -345,15 +346,14 @@ class ActionExecutor:
             return
         logs = self.database.table("activity_logs")
         actor_id = self.database.get_user_id(connection, actor_username)
+        log_round_id = self.database._round_ordinal_for_id(connection, round_id)
         connection.execute(
             logs.insert().values(
-                p_id=int(actor_id),
+                p_id=actor_id,
                 action_type=str(action_type),
-                target_post_id=(
-                    int(target_post_id) if target_post_id not in (None, "") else None
-                ),
+                target_post_id=target_post_id if target_post_id not in (None, "") else None,
                 status=str(status),
-                round_id=int(round_id),
+                round_id=log_round_id,
                 details=str(dict(details or {})),
             )
         )
@@ -374,7 +374,7 @@ class ActionExecutor:
         if tone not in {"positive", "neutral", "critical", "hostile", "supportive"}:
             tone = "positive"
         state = self._current_stress_reward_state(
-            connection, user_id=target_user_id, round_id=int(context.current_round.id)
+            connection, user_id=target_user_id, round_id=context.current_round.id
         )
         deltas = self.stress_reward_system.compute_comment_delta(
             tone=tone,
@@ -387,7 +387,7 @@ class ActionExecutor:
         self._persist_stress_reward_variations(
             connection,
             target_user_id=target_user_id,
-            current_round_id=int(context.current_round.id),
+            current_round_id=context.current_round.id,
             deltas=deltas,
             action_name=str(stress_reward_meta.get("action") or f"post:{tone}"),
         )
@@ -400,7 +400,7 @@ class ActionExecutor:
         action: AgentAction,
     ) -> None:
         target_user_id = self.database.get_post_author_id(
-            connection, int(action.payload["parent_post_id"])
+            connection, action.payload["parent_post_id"]
         )
         if not self._is_tracked_stress_reward_target(connection, target_user_id):
             return
@@ -409,7 +409,7 @@ class ActionExecutor:
         if tone not in {"positive", "neutral", "critical", "hostile", "supportive"}:
             tone = "positive"
         state = self._current_stress_reward_state(
-            connection, user_id=target_user_id, round_id=int(context.current_round.id)
+            connection, user_id=target_user_id, round_id=context.current_round.id
         )
         deltas = self.stress_reward_system.compute_comment_delta(
             tone=tone,
@@ -419,14 +419,14 @@ class ActionExecutor:
             public_exposure=self._resolved_comment_public_exposure(
                 connection,
                 stress_reward_meta=stress_reward_meta,
-                reference_post_id=int(action.payload["parent_post_id"]),
+                reference_post_id=action.payload["parent_post_id"],
             ),
             support_strength=float(stress_reward_meta.get("support_strength", 1.0) or 1.0),
         )
         self._persist_stress_reward_variations(
             connection,
             target_user_id=target_user_id,
-            current_round_id=int(context.current_round.id),
+            current_round_id=context.current_round.id,
             deltas=deltas,
             action_name=str(stress_reward_meta.get("action") or f"comment:{tone}"),
         )
@@ -438,14 +438,14 @@ class ActionExecutor:
         context: AgentContext,
         action: AgentAction,
     ) -> None:
-        target_user_id = self.database.get_post_author_id(connection, int(action.payload["post_id"]))
+        target_user_id = self.database.get_post_author_id(connection, action.payload["post_id"])
         if not self._is_tracked_stress_reward_target(connection, target_user_id):
             return
         reaction = str(action.payload.get("reaction_type") or "like").strip().lower()
         if reaction not in {"like", "dislike"}:
             reaction = "like" if reaction in {"love", "laugh"} else "dislike"
         state = self._current_stress_reward_state(
-            connection, user_id=target_user_id, round_id=int(context.current_round.id)
+            connection, user_id=target_user_id, round_id=context.current_round.id
         )
         deltas = self.stress_reward_system.compute_reaction_delta(
             reaction=reaction,
@@ -455,7 +455,7 @@ class ActionExecutor:
         self._persist_stress_reward_variations(
             connection,
             target_user_id=target_user_id,
-            current_round_id=int(context.current_round.id),
+            current_round_id=context.current_round.id,
             deltas=deltas,
             action_name=f"reaction:{reaction}",
         )
@@ -467,7 +467,7 @@ class ActionExecutor:
         context: AgentContext,
         action: AgentAction,
     ) -> None:
-        target_user_id = self.database.get_post_author_id(connection, int(action.payload["post_id"]))
+        target_user_id = self.database.get_post_author_id(connection, action.payload["post_id"])
         if not self._is_tracked_stress_reward_target(connection, target_user_id):
             return
         stress_reward_meta = action.payload.get("stress_reward") or {}
@@ -475,7 +475,7 @@ class ActionExecutor:
         if tone not in {"positive", "hostile"}:
             tone = "positive"
         state = self._current_stress_reward_state(
-            connection, user_id=target_user_id, round_id=int(context.current_round.id)
+            connection, user_id=target_user_id, round_id=context.current_round.id
         )
         deltas = self.stress_reward_system.compute_share_delta(
             tone=tone,
@@ -486,7 +486,7 @@ class ActionExecutor:
         self._persist_stress_reward_variations(
             connection,
             target_user_id=target_user_id,
-            current_round_id=int(context.current_round.id),
+            current_round_id=context.current_round.id,
             deltas=deltas,
             action_name=str(stress_reward_meta.get("action") or f"share:{tone}"),
         )
@@ -497,7 +497,7 @@ class ActionExecutor:
         *,
         context: AgentContext,
         action: AgentAction,
-        target_user_id: int,
+        target_user_id: Any,
     ) -> None:
         if not self._is_tracked_stress_reward_target(connection, target_user_id):
             return
@@ -506,7 +506,7 @@ class ActionExecutor:
         if outcome not in {"protected", "sanctioned"}:
             outcome = "sanctioned"
         state = self._current_stress_reward_state(
-            connection, user_id=target_user_id, round_id=int(context.current_round.id)
+            connection, user_id=target_user_id, round_id=context.current_round.id
         )
         deltas = self.stress_reward_system.compute_moderation_delta(
             outcome=outcome,
@@ -517,7 +517,7 @@ class ActionExecutor:
         self._persist_stress_reward_variations(
             connection,
             target_user_id=target_user_id,
-            current_round_id=int(context.current_round.id),
+            current_round_id=context.current_round.id,
             deltas=deltas,
             action_name=str(stress_reward_meta.get("action") or f"moderation:{outcome}"),
         )
@@ -532,13 +532,12 @@ class ActionExecutor:
         target_user_id = action.payload.get("target_user_id")
         if target_user_id in (None, ""):
             return
-        target_user_id = int(target_user_id)
         if not self._is_tracked_stress_reward_target(connection, target_user_id):
             return
         family = str(action.payload.get("family") or "").strip().lower()
         subtype = str(action.payload.get("subtype") or "").strip().lower()
         state = self._current_stress_reward_state(
-            connection, user_id=target_user_id, round_id=int(context.current_round.id)
+            connection, user_id=target_user_id, round_id=context.current_round.id
         )
         volume = max(1, int(action.payload.get("volume", 1) or 1))
         importance = float(action.payload.get("importance", 1.0) or 1.0)
@@ -591,7 +590,7 @@ class ActionExecutor:
         self._persist_stress_reward_variations(
             connection,
             target_user_id=target_user_id,
-            current_round_id=int(context.current_round.id),
+            current_round_id=context.current_round.id,
             deltas=deltas,
             action_name=str(action.payload.get("action_name") or f"{family}:{subtype}"),
         )
@@ -601,12 +600,12 @@ class ActionExecutor:
         connection,
         *,
         stress_reward_meta: dict[str, Any],
-        reference_post_id: int,
+        reference_post_id: Any,
     ) -> float:
         explicit = stress_reward_meta.get("public_exposure")
         if explicit not in (None, ""):
             return float(explicit)
-        return self._infer_public_exposure_for_post(connection, post_id=int(reference_post_id))
+        return self._infer_public_exposure_for_post(connection, post_id=reference_post_id)
 
     def _resolved_synthetic_comment_public_exposure(
         self,
@@ -620,25 +619,25 @@ class ActionExecutor:
         reference_post_id = action.payload.get("source_post_id") or action.payload.get("target_post_id")
         if reference_post_id in (None, ""):
             return float(default_exposure)
-        return self._infer_public_exposure_for_post(connection, post_id=int(reference_post_id))
+        return self._infer_public_exposure_for_post(connection, post_id=reference_post_id)
 
-    def _infer_public_exposure_for_post(self, connection, *, post_id: int) -> float:
-        thread_size = max(1, int(self.database.get_thread_post_count_for_post(connection, post_id=int(post_id))))
+    def _infer_public_exposure_for_post(self, connection, *, post_id: Any) -> float:
+        thread_size = max(1, int(self.database.get_thread_post_count_for_post(connection, post_id=post_id)))
         return min(2.0, 1.0 + 0.10 * max(0, thread_size - 1))
 
     def _current_stress_reward_state(
         self,
         connection,
         *,
-        user_id: int,
-        round_id: int,
+        user_id: Any,
+        round_id: Any,
     ) -> dict[str, float]:
         if not self.stress_reward_enabled:
             return {"stress": 0.0, "reward": 0.0}
         return self.database.get_current_stress_reward(
             connection,
-            user_id=int(user_id),
-            current_round_id=int(round_id),
+            user_id=user_id,
+            current_round_id=round_id,
             backward_rounds=self.stress_reward_backward_rounds,
         )
 
@@ -646,8 +645,8 @@ class ActionExecutor:
         self,
         connection,
         *,
-        target_user_id: int,
-        current_round_id: int,
+        target_user_id: Any,
+        current_round_id: Any,
         deltas: dict[str, Any],
         action_name: str,
     ) -> None:
@@ -664,8 +663,8 @@ class ActionExecutor:
             return
         self.database.set_stress_reward_variations(
             connection,
-            user_id=int(target_user_id),
-            round_id=int(current_round_id),
+            user_id=target_user_id,
+            round_id=current_round_id,
             variations=variations,
             action_name=action_name,
             aggregate_state={
@@ -674,26 +673,26 @@ class ActionExecutor:
             },
         )
 
-    def _target_user_id_for_post_action(self, action: AgentAction) -> int | None:
+    def _target_user_id_for_post_action(self, action: AgentAction) -> Any | None:
         stress_reward_meta = action.payload.get("stress_reward") or {}
         target_user_id = stress_reward_meta.get("target_user_id")
         if target_user_id not in (None, ""):
-            return int(target_user_id)
+            return target_user_id
         propaganda_activity = action.payload.get("propaganda_activity") or {}
         target_user_id = propaganda_activity.get("target_uid")
         if target_user_id not in (None, ""):
-            return int(target_user_id)
+            return target_user_id
         mop_activity = action.payload.get("mop_activity") or {}
         details = mop_activity.get("details") or {}
         target_user_id = details.get("target_user_id")
         if target_user_id not in (None, ""):
-            return int(target_user_id)
+            return target_user_id
         return None
 
-    def _is_tracked_stress_reward_target(self, connection, user_id: int) -> bool:
+    def _is_tracked_stress_reward_target(self, connection, user_id: Any) -> bool:
         if not self.stress_reward_enabled:
             return False
-        user_type = (self.database.get_user_type(connection, int(user_id)) or "").strip().lower()
+        user_type = (self.database.get_user_type(connection, user_id) or "").strip().lower()
         return user_type not in self._UNTRACKED_PLUGIN_USER_TYPES
 
     @staticmethod

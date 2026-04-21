@@ -21,31 +21,32 @@ class ModeratorAgent(BaseAgentPlugin):
         if self.settings:
             self._validate_settings(self._resolved_settings())
         metadata = MetaData()
+        id_type = database._id_sql_type(connection)
         sys_messages = Table(
             "sys_messages",
             metadata,
             Column("id", Integer, primary_key=True, autoincrement=True),
             Column("type", Text, nullable=False),
-            Column("to_uid", Integer, nullable=True),
+            Column("to_uid", id_type, nullable=True),
             Column("message", Text, nullable=False),
-            Column("from_round", Integer, nullable=True),
+            Column("from_round", id_type, nullable=True),
             Column("duration", Integer, nullable=True),
         )
         moderation_actions = Table(
             "plugin_moderation_actions",
             metadata,
             Column("id", Integer, primary_key=True, autoincrement=True),
-            Column("moderated_post_id", Integer, nullable=False),
-            Column("moderated_agent_id", Integer, nullable=False),
-            Column("moderator_agent_id", Integer, nullable=False),
+            Column("moderated_post_id", id_type, nullable=False),
+            Column("moderated_agent_id", id_type, nullable=False),
+            Column("moderator_agent_id", id_type, nullable=False),
             Column("moderation_type", String(100), nullable=False),
-            Column("round_id", Integer, nullable=False),
-            Column("generated_comment_id", Integer, nullable=True),
+            Column("round_id", id_type, nullable=False),
+            Column("generated_comment_id", id_type, nullable=True),
         )
         moderation_counts = Table(
             "plugin_moderation_counts",
             metadata,
-            Column("moderated_agent_id", Integer, primary_key=True),
+            Column("moderated_agent_id", id_type, primary_key=True),
             Column("moderation_count", Integer, nullable=False, default=0),
         )
         moderation_strategies = Table(
@@ -57,15 +58,15 @@ class ModeratorAgent(BaseAgentPlugin):
         shadow_ban = Table(
             "shadow_ban",
             metadata,
-            Column("uid", Integer, primary_key=True),
-            Column("start_tid", Integer, primary_key=True),
+            Column("uid", id_type, primary_key=True),
+            Column("start_tid", id_type, primary_key=True),
             Column("duration", Integer, nullable=False),
         )
         banned = Table(
             "banned",
             metadata,
-            Column("uid", Integer, primary_key=True),
-            Column("tid", Integer, nullable=False),
+            Column("uid", id_type, primary_key=True),
+            Column("tid", id_type, nullable=False),
         )
         tables = (
             sys_messages,
@@ -83,7 +84,8 @@ class ModeratorAgent(BaseAgentPlugin):
         if self._ban_enabled(self._resolved_settings()):
             user_mgmt_columns = database._table_columns(connection, "user_mgmt")
             if "left_on" not in user_mgmt_columns:
-                connection.execute(text("ALTER TABLE user_mgmt ADD COLUMN left_on INTEGER"))
+                column_type = "TEXT" if id_type is not Integer else "INTEGER"
+                connection.execute(text(f"ALTER TABLE user_mgmt ADD COLUMN left_on {column_type}"))
                 connection.commit()
                 database._reflected_tables.pop("user_mgmt", None)
         connection.commit()
@@ -193,7 +195,7 @@ class ModeratorAgent(BaseAgentPlugin):
             for post in context.recent_posts
             if post.moderated == 0
             and post.is_moderation_comment == 0
-            and (context.current_round.id - post.round_id) <= lookback_rounds
+            and (context.current_round.ordinal - post.round_ordinal) <= lookback_rounds
             and (post.reported_count > 0 or float(post.toxicity or 0.0) >= threshold)
             and not self._target_is_banned(context, post.author_id)
         ]
@@ -205,8 +207,8 @@ class ModeratorAgent(BaseAgentPlugin):
                 int(post.reported_count > 0),
                 int(post.reported_count),
                 float(post.toxicity or 0.0),
-                int(post.round_id),
-                int(post.id),
+                post.round_ordinal,
+                str(post.id),
             ),
         )
 
@@ -367,9 +369,9 @@ class ModeratorAgent(BaseAgentPlugin):
             self.llm.invoke_text(system_prompt=system_prompt, user_prompt=user_prompt)
         )
 
-    def _user_by_id(self, user_id: int, *, users):
+    def _user_by_id(self, user_id: object, *, users):
         for user in users:
-            if user.id == user_id:
+            if str(user.id) == str(user_id):
                 return user
         raise RuntimeError(f"User '{user_id}' not found in AgentContext.users")
 
@@ -383,25 +385,25 @@ class ModeratorAgent(BaseAgentPlugin):
         self,
         *,
         context: AgentContext,
-        target_user_id: int,
+        target_user_id: object,
         window_rounds: int,
     ) -> int:
         if context.connection is None:
             return 1
         previous = self.database.count_recent_infractions_for_user(
             context.connection,
-            user_id=int(target_user_id),
-            current_round_id=int(context.current_round.id),
+            user_id=target_user_id,
+            current_round_id=context.current_round.id,
             window_rounds=max(0, int(window_rounds)),
         )
         return previous + 1
 
-    def _target_is_banned(self, context: AgentContext, target_user_id: int) -> bool:
+    def _target_is_banned(self, context: AgentContext, target_user_id: object) -> bool:
         if context.connection is None:
             return False
         return self.database.user_is_banned(
             context.connection,
-            user_id=int(target_user_id),
+            user_id=target_user_id,
         )
 
     def _shadow_ban_enabled(self, settings: dict[str, object]) -> bool:

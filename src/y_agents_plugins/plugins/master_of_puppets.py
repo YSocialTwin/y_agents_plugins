@@ -23,11 +23,12 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
     def setup_database(self, database, connection) -> None:
         super().setup_database(database, connection)
         metadata = MetaData()
+        id_type = database._id_sql_type(connection)
         tables = (
             Table(
                 "mop_registry",
                 metadata,
-                Column("mop_id", Integer, primary_key=True),
+                Column("mop_id", id_type, primary_key=True),
                 Column("target_topics", Text, nullable=False),
                 Column("target_sentiment", Text, nullable=True),
                 Column("puppet_list", Text, nullable=False),
@@ -36,32 +37,32 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             Table(
                 "puppet_registry",
                 metadata,
-                Column("p_id", Integer, primary_key=True),
-                Column("parent_mop_id", Integer, nullable=False),
+                Column("p_id", id_type, primary_key=True),
+                Column("parent_mop_id", id_type, nullable=False),
                 Column("username", Text, nullable=False),
                 Column("is_banned", Boolean, nullable=False, default=False),
-                Column("creation_date", Integer, nullable=False),
+                Column("creation_date", id_type, nullable=False),
             ),
             Table(
                 "daily_schedules",
                 metadata,
                 Column("id", Integer, primary_key=True, autoincrement=True),
-                Column("p_id", Integer, nullable=False),
+                Column("p_id", id_type, nullable=False),
                 Column("timestamp", Integer, nullable=False),
                 Column("action_type", Text, nullable=False),
                 Column("payload", Text, nullable=True),
                 Column("scheduled_time", Integer, nullable=False),
                 Column("schedule_day", Integer, nullable=False),
                 Column("status", Text, nullable=False, default="pending"),
-                Column("executed_round_id", Integer, nullable=True),
+                Column("executed_round_id", id_type, nullable=True),
             ),
             Table(
                 "activity_logs",
                 metadata,
                 Column("id", Integer, primary_key=True, autoincrement=True),
-                Column("p_id", Integer, nullable=False),
+                Column("p_id", id_type, nullable=False),
                 Column("action_type", Text, nullable=False),
-                Column("target_post_id", Integer, nullable=True),
+                Column("target_post_id", id_type, nullable=True),
                 Column("status", Text, nullable=False),
                 Column("round_id", Integer, nullable=False),
                 Column("details", Text, nullable=True),
@@ -142,9 +143,9 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         *,
         context: AgentContext,
         agent: AgentSpec,
-        mop_id: int,
+        mop_id: Any,
         settings: dict[str, Any],
-    ) -> list[int]:
+    ) -> list[Any]:
         registry = self.database.table("puppet_registry")
         user_mgmt = self.database.table("user_mgmt")
         select_columns = [registry.c.p_id, registry.c.username, registry.c.is_banned]
@@ -157,13 +158,13 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             .select_from(
                 registry.outerjoin(user_mgmt, user_mgmt.c.id == registry.c.p_id)
             )
-            .where(registry.c.parent_mop_id == int(mop_id))
+            .where(registry.c.parent_mop_id == mop_id)
             .order_by(registry.c.p_id.asc())
         ).all()
-        active_ids: list[int] = []
+        active_ids: list[Any] = []
         known_usernames = {str(user.username) for user in context.users}
         for row in rows:
-            puppet_id = int(row[0])
+            puppet_id = row[0]
             username = str(row[1])
             is_banned = bool(row[2])
             left_on = row[3] if has_left_on and len(row) > 3 else None
@@ -188,7 +189,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                 password=username,
                 user_type="mop_puppet",
                 owner=agent.username,
-                joined_on=int(context.current_round.id),
+                joined_on=context.current_round.id,
                 activity_profile=agent.activity_profile,
                 daily_budget=float(
                     max(
@@ -202,15 +203,15 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             )
             context.connection.execute(
                 registry.insert().values(
-                    p_id=int(puppet_id),
-                    parent_mop_id=int(mop_id),
+                    p_id=puppet_id,
+                    parent_mop_id=mop_id,
                     username=username,
                     is_banned=False,
-                    creation_date=int(context.current_round.id),
+                    creation_date=context.current_round.id,
                 )
             )
             context.connection.commit()
-            active_ids.append(int(puppet_id))
+            active_ids.append(puppet_id)
             known_usernames.add(username)
         return active_ids
 
@@ -218,9 +219,9 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         self,
         *,
         context: AgentContext,
-        mop_id: int,
+        mop_id: Any,
         campaigns: list[dict[str, Any]],
-        puppet_ids: list[int],
+        puppet_ids: list[Any],
     ) -> None:
         registry = self.database.table("mop_registry")
         target_topics = json.dumps(
@@ -233,9 +234,9 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             },
             ensure_ascii=False,
         )
-        puppet_list = json.dumps([int(puppet_id) for puppet_id in puppet_ids])
+        puppet_list = json.dumps(list(puppet_ids))
         existing = context.connection.execute(
-            select(registry.c.mop_id).where(registry.c.mop_id == int(mop_id)).limit(1)
+            select(registry.c.mop_id).where(registry.c.mop_id == mop_id).limit(1)
         ).first()
         values = {
             "target_topics": target_topics,
@@ -243,12 +244,12 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             "puppet_list": puppet_list,
         }
         if existing is None:
-            values["mop_id"] = int(mop_id)
+            values["mop_id"] = mop_id
             values["last_planned_day"] = None
             context.connection.execute(registry.insert().values(**values))
         else:
             context.connection.execute(
-                registry.update().where(registry.c.mop_id == int(mop_id)).values(**values)
+                registry.update().where(registry.c.mop_id == mop_id).values(**values)
             )
         context.connection.commit()
 
@@ -257,8 +258,8 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         *,
         context: AgentContext,
         agent: AgentSpec,
-        mop_id: int,
-        puppet_ids: list[int],
+        mop_id: Any,
+        puppet_ids: list[Any],
         settings: dict[str, Any],
         campaigns: list[dict[str, Any]],
         users: tuple[UserRecord, ...],
@@ -267,7 +268,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         schedules = self.database.table("daily_schedules")
         existing = context.connection.execute(
             select(registry.c.last_planned_day)
-            .where(registry.c.mop_id == int(mop_id))
+            .where(registry.c.mop_id == mop_id)
             .limit(1)
         ).first()
         if existing is not None and existing[0] is not None and int(existing[0]) == int(context.current_round.day):
@@ -288,11 +289,11 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             if not remaining_slots:
                 break
             slot = planner_rng.choice(remaining_slots)
-            scheduled_round = int(context.current_round.id) + (slot - current_slot)
+            scheduled_round = context.current_round.ordinal + (slot - current_slot)
             payload = self._build_schedule_payload(
                 context=context,
                 agent=agent,
-                puppet_id=int(puppet_id),
+                puppet_id=puppet_id,
                 action_type=action_type,
                 campaigns=campaigns,
                 settings=settings,
@@ -301,8 +302,8 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             )
             context.connection.execute(
                 schedules.insert().values(
-                    p_id=int(puppet_id),
-                    timestamp=int(context.current_round.id),
+                    p_id=puppet_id,
+                    timestamp=context.current_round.ordinal,
                     action_type=action_type,
                     payload=json.dumps(payload, ensure_ascii=False),
                     scheduled_time=int(scheduled_round),
@@ -313,7 +314,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             )
         context.connection.execute(
             registry.update()
-            .where(registry.c.mop_id == int(mop_id))
+            .where(registry.c.mop_id == mop_id)
             .values(last_planned_day=int(context.current_round.day))
         )
         context.connection.commit()
@@ -323,7 +324,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         *,
         context: AgentContext,
         agent: AgentSpec,
-        puppet_id: int,
+        puppet_id: Any,
         action_type: str,
         campaigns: list[dict[str, Any]],
         settings: dict[str, Any],
@@ -348,7 +349,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                     target_user=target_user,
                 ),
                 "topic_ids": [int(campaign["runtime_topic_id"])],
-                "target_user_id": None if target_user is None else int(target_user.id),
+                "target_user_id": None if target_user is None else target_user.id,
             }
         if action_type == "expand":
             return {"campaign": campaign}
@@ -364,8 +365,8 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         *,
         context: AgentContext,
         agent: AgentSpec,
-        mop_id: int,
-        puppet_ids: list[int],
+        mop_id: Any,
+        puppet_ids: list[Any],
         campaigns: list[dict[str, Any]],
         settings: dict[str, Any],
         remaining_budget: int,
@@ -382,9 +383,9 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                 schedules.c.payload,
                 schedules.c.scheduled_time,
             )
-            .where(schedules.c.p_id.in_([int(puppet_id) for puppet_id in puppet_ids]))
+            .where(schedules.c.p_id.in_(list(puppet_ids)))
             .where(schedules.c.status == "pending")
-            .where(schedules.c.scheduled_time <= int(context.current_round.id))
+            .where(schedules.c.scheduled_time <= int(context.current_round.ordinal))
             .order_by(schedules.c.scheduled_time.asc(), schedules.c.id.asc())
         ).all()
         actions: list[AgentAction] = []
@@ -395,29 +396,29 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             payload = json.loads(payload_raw or "{}")
             budget = self._scheduled_action_budget(
                 context=context,
-                puppet_id=int(puppet_id),
+                puppet_id=puppet_id,
                 action_type=str(action_type),
             )
             executed_today = self._executed_action_count_today(
                 context=context,
-                puppet_id=int(puppet_id),
+                puppet_id=puppet_id,
                 action_type=str(action_type),
             )
             if budget >= 0 and executed_today >= budget:
                 self._mark_schedule_skipped(
                     context=context,
                     schedule_id=int(schedule_id),
-                    puppet_id=int(puppet_id),
+                    puppet_id=puppet_id,
                     action_type=str(action_type),
                     reason="local_budget_exhausted",
                 )
                 continue
-            puppet = self._safe_user_by_id(int(puppet_id), users=users)
+            puppet = self._safe_user_by_id(puppet_id, users=users)
             if puppet is None:
                 self._mark_schedule_skipped(
                     context=context,
                     schedule_id=int(schedule_id),
-                    puppet_id=int(puppet_id),
+                    puppet_id=puppet_id,
                     action_type=str(action_type),
                     reason="puppet_missing",
                 )
@@ -437,7 +438,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                 self._mark_schedule_skipped(
                     context=context,
                     schedule_id=int(schedule_id),
-                    puppet_id=int(puppet_id),
+                    puppet_id=puppet_id,
                     action_type=str(action_type),
                     reason="no_valid_target",
                 )
@@ -457,13 +458,13 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         *,
         context: AgentContext,
         agent: AgentSpec,
-        mop_id: int,
+        mop_id: Any,
         puppet: UserRecord,
         campaigns: list[dict[str, Any]],
         action_type: str,
         payload: dict[str, Any],
         schedule_id: int,
-        puppet_ids: list[int],
+        puppet_ids: list[Any],
     ) -> AgentAction | None:
         if action_type == "post":
             return AgentAction(
@@ -502,12 +503,12 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                 action_type="FOLLOW_USER",
                 payload={
                     "acting_username": puppet.username,
-                    "target_user_id": int(target_user.id),
+                    "target_user_id": target_user.id,
                     "follow_action": "follow",
                     "mop_activity": {
                         "schedule_id": int(schedule_id),
                         "action_type": "expand",
-                        "details": {"target_user_id": int(target_user.id)},
+                        "details": {"target_user_id": target_user.id},
                     },
                 },
             )
@@ -526,7 +527,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                     action_type="REACT_POST",
                     payload={
                         "acting_username": puppet.username,
-                        "post_id": int(sibling_post.id),
+                        "post_id": sibling_post.id,
                         "reaction_type": "like",
                         "stress_reward": {
                             "action": "reaction:like",
@@ -534,7 +535,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                         "mop_activity": {
                             "schedule_id": int(schedule_id),
                             "action_type": "boost",
-                            "target_post_id": int(sibling_post.id),
+                            "target_post_id": sibling_post.id,
                             "details": {"boost_mode": "like"},
                         },
                     },
@@ -545,7 +546,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                 action_type="SHARE_POST",
                 payload={
                     "acting_username": puppet.username,
-                    "post_id": int(sibling_post.id),
+                    "post_id": sibling_post.id,
                     "text": str(sibling_post.text),
                     "topic_ids": [int(campaign["runtime_topic_id"])],
                     "stress_reward": {
@@ -555,7 +556,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                     "mop_activity": {
                         "schedule_id": int(schedule_id),
                         "action_type": "boost",
-                        "target_post_id": int(sibling_post.id),
+                        "target_post_id": sibling_post.id,
                         "details": {"boost_mode": "share"},
                     },
                 },
@@ -567,20 +568,20 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         *,
         context: AgentContext,
         puppet: UserRecord,
-        mop_id: int,
-        puppet_ids: list[int],
+        mop_id: Any,
+        puppet_ids: list[Any],
     ) -> UserRecord | None:
         followed = self.database.get_followed_user_ids(
             context.connection,
             username=puppet.username,
         )
-        forbidden = {int(mop_id), int(puppet.id), *[int(puppet_id) for puppet_id in puppet_ids]}
+        forbidden = {str(mop_id), str(puppet.id), *[str(puppet_id) for puppet_id in puppet_ids]}
         candidates = [
             user
             for user in context.users
-            if int(user.id) not in forbidden
-            and int(user.id) not in followed
-            and not self.database.user_is_banned(context.connection, user_id=int(user.id))
+            if str(user.id) not in forbidden
+            and all(str(user.id) != str(followed_id) for followed_id in followed)
+            and not self.database.user_is_banned(context.connection, user_id=user.id)
         ]
         if not candidates:
             return None
@@ -591,20 +592,20 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         *,
         context: AgentContext,
         puppet: UserRecord,
-        puppet_ids: list[int],
+        puppet_ids: list[Any],
         lookback_hours: int,
     ) -> PostRecord | None:
-        sibling_ids = [int(puppet_id) for puppet_id in puppet_ids if int(puppet_id) != int(puppet.id)]
+        sibling_ids = [puppet_id for puppet_id in puppet_ids if str(puppet_id) != str(puppet.id)]
         posts = self.database.get_posts_by_author_ids_since_round(
             context.connection,
             author_ids=sibling_ids,
-            min_round_id=max(0, int(context.current_round.id) - max(1, int(lookback_hours))),
+            min_round_id=max(0, int(context.current_round.ordinal) - max(1, int(lookback_hours))),
             limit=100,
         )
         candidates = [
             post
             for post in posts
-            if int(post.author_id) != int(puppet.id)
+            if str(post.author_id) != str(puppet.id)
             and int(post.is_moderation_comment or 0) == 0
         ]
         if not candidates:
@@ -615,18 +616,18 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         self,
         *,
         context: AgentContext,
-        puppet_id: int,
+        puppet_id: Any,
         campaign: dict[str, Any],
         planner_rng: random.Random,
         users: tuple[UserRecord, ...],
     ) -> UserRecord | None:
-        forbidden = {int(puppet_id)}
+        forbidden = {str(puppet_id)}
         candidates = [
             user
             for user in users
-            if int(user.id) not in forbidden
+            if str(user.id) not in forbidden
             and str(user.user_type or "").strip().lower() not in {"mop_puppet", self.agent_type}
-            and not self.database.user_is_banned(context.connection, user_id=int(user.id))
+            and not self.database.user_is_banned(context.connection, user_id=user.id)
         ]
         if not candidates:
             return None
@@ -635,9 +636,9 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             for user in candidates:
                 current = self.database.get_latest_agent_opinion(
                     context.connection,
-                    user_id=int(user.id),
+                    user_id=user.id,
                     topic_id=int(campaign["runtime_topic_id"]),
-                    current_round_id=int(context.current_round.id),
+                    current_round_id=context.current_round.id,
                 )
                 if current is None:
                     continue
@@ -653,7 +654,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         *,
         agent: AgentSpec,
         campaign: dict[str, Any],
-        puppet_id: int,
+        puppet_id: Any,
         target_user: UserRecord | None,
     ) -> str:
         mention = f"@{target_user.username} " if target_user is not None else ""
@@ -703,15 +704,15 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         context.connection.execute(
             schedules.update()
             .where(schedules.c.id == int(schedule_id))
-            .values(status="skipped", executed_round_id=int(context.current_round.id))
+            .values(status="skipped", executed_round_id=context.current_round.id)
         )
         context.connection.execute(
             logs.insert().values(
-                p_id=int(puppet_id),
+                p_id=puppet_id,
                 action_type=str(action_type),
                 target_post_id=None,
                 status="skipped",
-                round_id=int(context.current_round.id),
+                round_id=int(context.current_round.ordinal),
                 details=str({"reason": reason, "schedule_id": int(schedule_id)}),
             )
         )
@@ -722,13 +723,13 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         *,
         context: AgentContext,
         agent: AgentSpec,
-        puppet_ids: list[int],
+        puppet_ids: list[Any],
     ) -> int:
         logs = self.database.table("activity_logs")
         row = context.connection.execute(
             select(logs.c.id)
-            .where(logs.c.p_id.in_([int(puppet_id) for puppet_id in puppet_ids]))
-            .where(logs.c.round_id >= (int(context.current_round.id) - int(context.current_round.slot)))
+            .where(logs.c.p_id.in_(list(puppet_ids)))
+            .where(logs.c.round_id >= (int(context.current_round.ordinal) - int(context.current_round.slot)))
             .where(logs.c.status == "executed")
         ).all()
         used = len(row)
@@ -738,16 +739,16 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         self,
         *,
         context: AgentContext,
-        puppet_id: int,
+        puppet_id: Any,
         action_type: str,
     ) -> int:
         logs = self.database.table("activity_logs")
         return len(
             context.connection.execute(
                 select(logs.c.id)
-                .where(logs.c.p_id == int(puppet_id))
+                .where(logs.c.p_id == puppet_id)
                 .where(logs.c.action_type == str(action_type))
-                .where(logs.c.round_id >= (int(context.current_round.id) - int(context.current_round.slot)))
+                .where(logs.c.round_id >= (int(context.current_round.ordinal) - int(context.current_round.slot)))
                 .where(logs.c.status == "executed")
             ).all()
         )
@@ -756,14 +757,14 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         self,
         *,
         context: AgentContext,
-        puppet_id: int,
+        puppet_id: Any,
         action_type: str,
     ) -> int:
         schedules = self.database.table("daily_schedules")
         return len(
             context.connection.execute(
                 select(schedules.c.id)
-                .where(schedules.c.p_id == int(puppet_id))
+                .where(schedules.c.p_id == puppet_id)
                 .where(schedules.c.action_type == str(action_type))
                 .where(schedules.c.schedule_day == int(context.current_round.day))
             ).all()
@@ -776,7 +777,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         puppet_ids: list[int],
         settings: dict[str, Any],
         planner_rng: random.Random,
-    ) -> list[tuple[int, str]]:
+    ) -> list[tuple[Any, str]]:
         total_budget = max(1, int(float(agent.daily_budget)))
         weights = {
             "post": max(0.0, float(settings.get("post_budget_percentage", 0) or 0.0)),
@@ -808,7 +809,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         idx = 0
         for action_type in ("post", "expand", "boost"):
             for _ in range(max(0, allocations.get(action_type, 0))):
-                assignments.append((int(puppet_cycle[idx % len(puppet_cycle)]), action_type))
+                assignments.append((puppet_cycle[idx % len(puppet_cycle)], action_type))
                 idx += 1
         planner_rng.shuffle(assignments)
         return assignments
@@ -817,7 +818,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         self,
         *,
         context: AgentContext,
-        puppet_ids: list[int],
+        puppet_ids: list[Any],
         campaigns: list[dict[str, Any]],
     ) -> None:
         if not self.database.has_table(context.connection, "agent_opinion"):
@@ -829,10 +830,10 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                     continue
                 self.database.set_fixed_agent_opinion(
                     context.connection,
-                    user_id=int(puppet_id),
+                    user_id=puppet_id,
                     topic_id=int(campaign["runtime_topic_id"]),
                     opinion=float(target_opinion),
-                    round_id=int(context.current_round.id),
+                    round_id=context.current_round.id,
                 )
 
     def _resolved_campaigns(
@@ -937,9 +938,9 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
 
     @staticmethod
     def _safe_user_by_id(
-        user_id: int, *, users: tuple[UserRecord, ...]
+        user_id: Any, *, users: tuple[UserRecord, ...]
     ) -> UserRecord | None:
         for user in users:
-            if int(user.id) == int(user_id):
+            if str(user.id) == str(user_id):
                 return user
         return None

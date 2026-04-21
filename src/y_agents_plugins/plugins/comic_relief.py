@@ -47,8 +47,8 @@ class ComicReliefAgent(BaseAgentPlugin):
                     agent_type=self.agent_type,
                     action_type="CREATE_COMMENT",
                     payload={
-                        "parent_post_id": int(target_post.id),
-                        "thread_id": int(target_post.thread_id or target_post.id),
+                        "parent_post_id": target_post.id,
+                        "thread_id": target_post.thread_id or target_post.id,
                         "text": self._build_comment_text(
                             agent=agent,
                             target_user=target_user,
@@ -72,13 +72,13 @@ class ComicReliefAgent(BaseAgentPlugin):
                         target_user=target_user,
                         target_post=target_post,
                     ),
-                    "stress_reward": {
-                        "tone": "supportive",
-                        "action": "post:supportive",
-                        "target_user_id": int(target_user.id),
+                        "stress_reward": {
+                            "tone": "supportive",
+                            "action": "post:supportive",
+                            "target_user_id": target_user.id,
+                        },
                     },
-                },
-            ),
+                ),
         ]
 
     def _select_target_post(
@@ -94,14 +94,14 @@ class ComicReliefAgent(BaseAgentPlugin):
             except Exception:
                 actor_user_id = None
         lookback_rounds = max(1, int((agent.parameters or {}).get("post_lookback_rounds") or self.settings.get("post_lookback_rounds") or 24))
-        min_round = max(0, int(context.current_round.id) - lookback_rounds)
+        min_round = context.current_round.ordinal - lookback_rounds
         candidates = []
         for post in context.recent_posts:
-            if int(post.round_id) < min_round:
+            if post.round_ordinal < min_round:
                 continue
             if int(post.is_moderation_comment or 0):
                 continue
-            if actor_user_id is not None and int(post.author_id) == int(actor_user_id):
+            if actor_user_id is not None and str(post.author_id) == str(actor_user_id):
                 continue
             user = self._safe_user_by_id(post.author_id, users=context.users)
             if user is None:
@@ -112,7 +112,7 @@ class ComicReliefAgent(BaseAgentPlugin):
             candidates.append(post)
         if not candidates:
             return None
-        candidates.sort(key=lambda post: (int(post.round_id), int(post.id)), reverse=True)
+        candidates.sort(key=lambda post: (post.round_ordinal, str(post.id)), reverse=True)
         return candidates[0]
 
     def _build_post_text(
@@ -180,7 +180,7 @@ class ComicReliefAgent(BaseAgentPlugin):
             },
         )
 
-    def _delivery_mode(self, agent: AgentSpec, round_id: int) -> str:
+    def _delivery_mode(self, agent: AgentSpec, round_id) -> str:
         mode = str(
             self._resolved_settings(agent).get("delivery_mode")
             or "alternate"
@@ -189,7 +189,7 @@ class ComicReliefAgent(BaseAgentPlugin):
             return "post"
         if mode == "comment_only":
             return "comment"
-        return "post" if int(round_id) % 2 else "comment"
+        return "post" if (self._round_parity(round_id) % 2) else "comment"
 
     def _humor_styles(self, agent: AgentSpec) -> list[str]:
         value = self._resolved_settings(agent).get("humor_styles")
@@ -226,14 +226,21 @@ class ComicReliefAgent(BaseAgentPlugin):
         return cleaned
 
     @staticmethod
-    def _safe_user_by_id(user_id: int, *, users: tuple[UserRecord, ...]) -> UserRecord | None:
+    def _safe_user_by_id(user_id, *, users: tuple[UserRecord, ...]) -> UserRecord | None:
         for user in users:
-            if int(user.id) == int(user_id):
+            if str(user.id) == str(user_id):
                 return user
         return None
 
-    def _user_by_id(self, user_id: int, *, users: tuple[UserRecord, ...]) -> UserRecord:
+    def _user_by_id(self, user_id, *, users: tuple[UserRecord, ...]) -> UserRecord:
         user = self._safe_user_by_id(user_id, users=users)
         if user is None:
             raise RuntimeError(f"User '{user_id}' not found in AgentContext.users")
         return user
+
+    @staticmethod
+    def _round_parity(round_id) -> int:
+        try:
+            return int(round_id)
+        except Exception:
+            return sum(ord(ch) for ch in str(round_id or ""))

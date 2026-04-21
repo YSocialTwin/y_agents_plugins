@@ -79,7 +79,7 @@ class ExperimentDatabase:
     def get_rounds_after(
         self,
         connection: Connection,
-        after_round_id: int | None,
+        after_round_id: Any | None,
     ) -> tuple[SimulationRound, ...]:
         rounds = self.table("rounds")
         statement = (
@@ -89,22 +89,51 @@ class ExperimentDatabase:
         if after_round_id is None:
             rows = connection.execute(statement).mappings().all()
         else:
-            rows = connection.execute(statement.where(rounds.c.id > after_round_id)).mappings().all()
+            after_row = connection.execute(
+                select(rounds.c.id, rounds.c.day, rounds.c.hour)
+                .where(rounds.c.id == after_round_id)
+                .limit(1)
+            ).mappings().first()
+            if after_row is None:
+                rows = connection.execute(statement).mappings().all()
+            else:
+                rows = connection.execute(
+                    statement.where(
+                        (rounds.c.day > int(after_row["day"]))
+                        | (
+                            (rounds.c.day == int(after_row["day"]))
+                            & (rounds.c.hour > int(after_row["hour"]))
+                        )
+                        | (
+                            (rounds.c.day == int(after_row["day"]))
+                            & (rounds.c.hour == int(after_row["hour"]))
+                            & (rounds.c.id > after_row["id"])
+                        )
+                    )
+                ).mappings().all()
         return tuple(self._round_from_row(row) for row in rows)
 
     def get_recent_posts(
         self,
         connection: Connection,
         *,
-        round_id: int,
+        round_id: Any,
         limit: int,
     ) -> tuple[PostRecord, ...]:
         post = self.table("post")
+        rounds = self.table("rounds")
+        current_round = connection.execute(
+            select(rounds.c.id, rounds.c.day, rounds.c.hour)
+            .where(rounds.c.id == round_id)
+            .limit(1)
+        ).mappings().first()
         statement = select(
             post.c.id,
             post.c.user_id,
             post.c.tweet,
             post.c.round,
+            rounds.c.day.label("round_day"),
+            rounds.c.hour.label("round_hour"),
             post.c.comment_to,
             post.c.thread_id,
             post.c.shared_from,
@@ -116,7 +145,16 @@ class ExperimentDatabase:
             ).label("is_moderation_comment"),
             literal(0.0).label("toxicity"),
             literal(0).label("reported_count"),
-        ).where(post.c.round <= round_id)
+        ).select_from(post.outerjoin(rounds, rounds.c.id == post.c.round))
+        if current_round is not None:
+            statement = statement.where(
+                rounds.c.id.is_(None)
+                | (rounds.c.day < int(current_round["day"]))
+                | (
+                    (rounds.c.day == int(current_round["day"]))
+                    & (rounds.c.hour <= int(current_round["hour"]))
+                )
+            )
 
         if self.has_table(connection, "post_toxicity"):
             post_toxicity = self.table("post_toxicity")
@@ -148,6 +186,8 @@ class ExperimentDatabase:
                 post.c.user_id,
                 post.c.tweet,
                 post.c.round,
+                rounds.c.day.label("round_day"),
+                rounds.c.hour.label("round_hour"),
                 post.c.comment_to,
                 post.c.thread_id,
                 post.c.shared_from,
@@ -177,6 +217,8 @@ class ExperimentDatabase:
                 post.c.user_id,
                 post.c.tweet,
                 post.c.round,
+                rounds.c.day.label("round_day"),
+                rounds.c.hour.label("round_hour"),
                 post.c.comment_to,
                 post.c.thread_id,
                 post.c.shared_from,
@@ -186,16 +228,24 @@ class ExperimentDatabase:
                 func.coalesce(reported_subquery.c.reported_count, 0).label("reported_count"),
             )
 
-        rows = connection.execute(statement.order_by(post.c.id.desc()).limit(limit)).mappings().all()
+        rows = connection.execute(
+            statement.order_by(
+                rounds.c.day.desc().nullslast(),
+                rounds.c.hour.desc().nullslast(),
+                post.c.id.desc(),
+            ).limit(limit)
+        ).mappings().all()
         return tuple(
             PostRecord(
-                id=int(row["id"]),
-                author_id=int(row["user_id"]),
+                id=_raw_id(row["id"]),
+                author_id=_raw_id(row["user_id"]),
                 text=str(row["tweet"]),
-                round_id=int(row["round"]),
-                comment_to=_nullable_int(row["comment_to"]),
-                thread_id=_nullable_int(row["thread_id"]),
-                shared_from=_nullable_int(row["shared_from"]),
+                round_id=_raw_id(row["round"]),
+                comment_to=_nullable_id(row["comment_to"]),
+                thread_id=_nullable_id(row["thread_id"]),
+                shared_from=_nullable_id(row["shared_from"]),
+                round_day=int(row["round_day"]) if row["round_day"] is not None else None,
+                round_slot=int(row["round_hour"]) if row["round_hour"] is not None else None,
                 moderated=int(row["moderated"] or 0),
                 is_moderation_comment=int(row["is_moderation_comment"] or 0),
                 toxicity=float(row["toxicity"]) if row["toxicity"] is not None else None,
@@ -209,7 +259,7 @@ class ExperimentDatabase:
         rows = connection.execute(select(user_mgmt).order_by(user_mgmt.c.id.asc())).mappings().all()
         return tuple(
             UserRecord(
-                id=int(row["id"]),
+                id=_raw_id(row["id"]),
                 username=str(row["username"]),
                 user_type=row["user_type"],
                 owner=row["owner"],
@@ -222,24 +272,25 @@ class ExperimentDatabase:
             for row in rows
         )
 
-    def get_user_id(self, connection: Connection, username: str) -> int:
+    def get_user_id(self, connection: Connection, username: str) -> Any:
         user_mgmt = self.table("user_mgmt")
         row = connection.execute(
             select(user_mgmt.c.id).where(user_mgmt.c.username == username).limit(1)
         ).first()
         if row is None:
             raise RuntimeError(f"User '{username}' not found in user_mgmt")
-        return int(row[0])
+        return _raw_id(row[0])
 
     def register_agents(
         self,
         connection: Connection,
         agents: tuple[AgentSpec, ...],
         *,
-        joined_on: int,
+        joined_on: Any,
     ) -> None:
         user_mgmt = self.table("user_mgmt")
         supported_columns = self._table_columns(connection, "user_mgmt")
+        id_type = self._id_sql_type(connection)
         for agent in agents:
             existing = connection.execute(
                 select(user_mgmt.c.id)
@@ -276,10 +327,12 @@ class ExperimentDatabase:
             }
 
             if existing is None:
+                if "id" in supported_columns and id_type is not Integer:
+                    filtered_values.setdefault("id", str(uuid.uuid4()))
                 connection.execute(user_mgmt.insert().values(**filtered_values))
             else:
                 connection.execute(
-                    user_mgmt.update().where(user_mgmt.c.id == int(existing[0])).values(**filtered_values)
+                    user_mgmt.update().where(user_mgmt.c.id == existing[0]).values(**filtered_values)
                 )
         connection.commit()
 
@@ -289,9 +342,9 @@ class ExperimentDatabase:
         *,
         username: str,
         text: str,
-        round_id: int,
+        round_id: Any,
         topic_ids: list[int] | tuple[int, ...] | None = None,
-    ) -> int:
+    ) -> Any:
         post = self.table("post")
         user_id = self.get_user_id(connection, username)
         result = connection.execute(
@@ -306,7 +359,11 @@ class ExperimentDatabase:
             )
             .returning(post.c.id)
         )
-        post_id = int(result.scalar_one())
+        post_id = _raw_id(result.scalar_one())
+        if "thread_id" in post.c:
+            connection.execute(
+                post.update().where(post.c.id == post_id).values(thread_id=post_id)
+            )
         self._insert_mentions_for_text(
             connection,
             text=text,
@@ -327,11 +384,11 @@ class ExperimentDatabase:
         *,
         username: str,
         text: str,
-        round_id: int,
-        parent_post_id: int,
+        round_id: Any,
+        parent_post_id: Any,
         is_moderation_comment: bool = False,
         topic_ids: list[int] | tuple[int, ...] | None = None,
-    ) -> int:
+    ) -> Any:
         post = self.table("post")
         user_id = self.get_user_id(connection, username)
         parent = connection.execute(
@@ -339,7 +396,7 @@ class ExperimentDatabase:
         ).mappings().first()
         if parent is None:
             raise RuntimeError(f"Parent post '{parent_post_id}' not found in post table")
-        thread_id = _nullable_int(parent["thread_id"]) or int(parent["id"])
+        thread_id = _nullable_id(parent["thread_id"]) or _raw_id(parent["id"])
         values = {
             "tweet": text,
             "user_id": user_id,
@@ -351,7 +408,7 @@ class ExperimentDatabase:
         if "is_moderation_comment" in post.c:
             values["is_moderation_comment"] = int(bool(is_moderation_comment))
         result = connection.execute(post.insert().values(**values).returning(post.c.id))
-        comment_id = int(result.scalar_one())
+        comment_id = _raw_id(result.scalar_one())
         self._insert_mentions_for_text(
             connection,
             text=text,
@@ -371,15 +428,15 @@ class ExperimentDatabase:
         connection: Connection,
         *,
         username: str,
-        shared_post_id: int,
+        shared_post_id: Any,
         text: str,
-        round_id: int,
+        round_id: Any,
         topic_ids: list[int] | tuple[int, ...] | None = None,
-    ) -> int:
+    ) -> Any:
         post = self.table("post")
         user_id = self.get_user_id(connection, username)
         original = connection.execute(
-            select(post).where(post.c.id == int(shared_post_id)).limit(1)
+            select(post).where(post.c.id == shared_post_id).limit(1)
         ).mappings().first()
         if original is None:
             raise RuntimeError(f"Shared post '{shared_post_id}' not found in post table")
@@ -389,16 +446,16 @@ class ExperimentDatabase:
             "comment_to": -1,
             "thread_id": None,
             "round": round_id,
-            "shared_from": int(shared_post_id),
+            "shared_from": shared_post_id,
         }
         for optional_column in ("news_id", "image_id", "image_post_id"):
             if optional_column in post.c and optional_column in original:
                 values[optional_column] = original[optional_column]
         result = connection.execute(post.insert().values(**values).returning(post.c.id))
-        share_id = int(result.scalar_one())
+        share_id = _raw_id(result.scalar_one())
         if "thread_id" in post.c:
             connection.execute(
-                post.update().where(post.c.id == int(share_id)).values(thread_id=int(share_id))
+                post.update().where(post.c.id == share_id).values(thread_id=share_id)
             )
         self._insert_mentions_for_text(
             connection,
@@ -419,10 +476,10 @@ class ExperimentDatabase:
         connection: Connection,
         *,
         username: str,
-        post_id: int,
+        post_id: Any,
         reaction_type: str,
-        round_id: int,
-    ) -> int | None:
+        round_id: Any,
+    ) -> Any | None:
         if not self.has_table(connection, "reactions"):
             return None
         reactions = self.table("reactions")
@@ -431,22 +488,22 @@ class ExperimentDatabase:
         result = connection.execute(
             reactions.insert()
             .values(
-                round=int(round_id),
-                user_id=int(user_id),
-                post_id=int(post_id),
+                round=round_id,
+                user_id=user_id,
+                post_id=post_id,
                 type=str(reaction_type),
             )
             .returning(reactions.c.id)
         )
-        reaction_id = int(result.scalar_one())
+        reaction_id = _raw_id(result.scalar_one())
         if "reaction_count" in post.c:
             current = connection.execute(
-                select(post.c.reaction_count).where(post.c.id == int(post_id)).limit(1)
+                select(post.c.reaction_count).where(post.c.id == post_id).limit(1)
             ).first()
             if current is not None:
                 connection.execute(
                     post.update()
-                    .where(post.c.id == int(post_id))
+                    .where(post.c.id == post_id)
                     .values(reaction_count=int(current[0] or 0) + 1)
                 )
         connection.commit()
@@ -457,8 +514,8 @@ class ExperimentDatabase:
         connection: Connection,
         *,
         username: str,
-        post_id: int,
-        round_id: int,
+        post_id: Any,
+        round_id: Any,
         report_type: str = "synthetic_pressure",
         count: int = 1,
     ) -> int:
@@ -472,9 +529,9 @@ class ExperimentDatabase:
                 reported.insert().values(
                     type=str(report_type),
                     to_uid=None,
-                    to_post=int(post_id),
-                    from_uid=int(user_id),
-                    tid=int(round_id),
+                    to_post=post_id,
+                    from_uid=user_id,
+                    tid=round_id,
                 )
             )
             written += 1
@@ -487,20 +544,20 @@ class ExperimentDatabase:
         connection: Connection,
         *,
         username: str,
-        target_user_id: int,
-        round_id: int,
+        target_user_id: Any,
+        round_id: Any,
         action: str = "follow",
     ) -> bool:
         if not self.has_table(connection, "follow"):
             return False
         user_id = self.get_user_id(connection, username)
-        if int(user_id) == int(target_user_id):
+        if str(user_id) == str(target_user_id):
             return False
         follow = self.table("follow")
         existing = connection.execute(
             select(follow.c.id, follow.c.action)
-            .where(follow.c.user_id == int(user_id))
-            .where(follow.c.follower_id == int(target_user_id))
+            .where(follow.c.user_id == user_id)
+            .where(follow.c.follower_id == target_user_id)
             .order_by(follow.c.round.desc(), follow.c.id.desc())
             .limit(1)
         ).first()
@@ -511,9 +568,9 @@ class ExperimentDatabase:
             return False
         connection.execute(
             follow.insert().values(
-                user_id=int(user_id),
-                follower_id=int(target_user_id),
-                round=int(round_id),
+                user_id=user_id,
+                follower_id=target_user_id,
+                round=round_id,
                 action=normalized_action,
             )
         )
@@ -529,22 +586,23 @@ class ExperimentDatabase:
         password: str,
         user_type: str,
         owner: str | None,
-        joined_on: int,
+        joined_on: Any,
         activity_profile: str | None = None,
         daily_budget: float | None = None,
-    ) -> int:
+    ) -> Any:
         user_mgmt = self.table("user_mgmt")
         existing = connection.execute(
             select(user_mgmt.c.id).where(user_mgmt.c.username == str(username)).limit(1)
         ).first()
         supported_columns = self._table_columns(connection, "user_mgmt")
+        id_type = self._id_sql_type(connection)
         values = {
             "username": str(username),
             "email": str(email),
             "password": str(password),
             "user_type": str(user_type),
             "owner": owner,
-            "joined_on": int(joined_on),
+            "joined_on": joined_on,
             "activity_profile": activity_profile,
             "daily_budget": daily_budget,
         }
@@ -554,6 +612,8 @@ class ExperimentDatabase:
             if key in supported_columns and value is not None
         }
         if existing is None:
+            if "id" in supported_columns and id_type is not Integer:
+                filtered.setdefault("id", str(uuid.uuid4()))
             result = connection.execute(user_mgmt.insert().values(**filtered))
             connection.commit()
             inserted_id = result.inserted_primary_key[0] if result.inserted_primary_key else None
@@ -565,26 +625,27 @@ class ExperimentDatabase:
                 ).first()
                 if inserted is None:
                     raise RuntimeError(f"Failed to create plugin user '{username}'")
-                return int(inserted[0])
-            return int(inserted_id)
+                return _raw_id(inserted[0])
+            return _raw_id(inserted_id)
         connection.execute(
-            user_mgmt.update().where(user_mgmt.c.id == int(existing[0])).values(**filtered)
+            user_mgmt.update().where(user_mgmt.c.id == existing[0]).values(**filtered)
         )
         connection.commit()
-        return int(existing[0])
+        return _raw_id(existing[0])
 
     def ensure_stress_reward_schema(self, connection: Connection) -> None:
         metadata = MetaData()
+        id_type = self._id_sql_type(connection)
         stress_reward = Table(
             "stress_reward",
             metadata,
             Column("id", String(36), primary_key=True),
-            Column("uid", Integer, nullable=False),
+            Column("uid", id_type, nullable=False),
             Column("variable", String(32), nullable=False),
             Column("value", REAL, nullable=False),
             Column("type", String(32), nullable=False),
             Column("action", String(64), nullable=True),
-            Column("tid", Integer, nullable=False),
+            Column("tid", id_type, nullable=False),
             CheckConstraint("variable IN ('stress', 'reward')", name="ck_stress_reward_variable"),
             CheckConstraint("type IN ('aggregate', 'variation')", name="ck_stress_reward_type"),
             CheckConstraint(
@@ -604,10 +665,10 @@ class ExperimentDatabase:
             connection.commit()
             self._reflected_tables.pop("stress_reward", None)
 
-    def get_user_type(self, connection: Connection, user_id: int) -> str | None:
+    def get_user_type(self, connection: Connection, user_id: Any) -> str | None:
         user_mgmt = self.table("user_mgmt")
         row = connection.execute(
-            select(user_mgmt.c.user_type).where(user_mgmt.c.id == int(user_id)).limit(1)
+            select(user_mgmt.c.user_type).where(user_mgmt.c.id == user_id).limit(1)
         ).first()
         return None if row is None or row[0] is None else str(row[0])
 
@@ -615,20 +676,39 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        user_id: int,
-        current_round_id: int,
+        user_id: Any,
+        current_round_id: Any,
         backward_rounds: int = 24,
     ) -> dict[str, float]:
         if not self.has_table(connection, "stress_reward"):
             return {"stress": 0.0, "reward": 0.0}
         stress_reward = self.table("stress_reward")
-        current_round_id = int(current_round_id)
-        min_round_id = max(1, current_round_id - max(0, int(backward_rounds)))
+        rounds = self.table("rounds")
+        current_round = connection.execute(
+            select(rounds.c.id, rounds.c.day, rounds.c.hour)
+            .where(rounds.c.id == current_round_id)
+            .limit(1)
+        ).mappings().first()
+        if current_round is None:
+            return {"stress": 0.0, "reward": 0.0}
+        round_window = connection.execute(
+            select(rounds.c.id)
+            .where(
+                (rounds.c.day < int(current_round["day"]))
+                | (
+                    (rounds.c.day == int(current_round["day"]))
+                    & (rounds.c.hour <= int(current_round["hour"]))
+                )
+            )
+            .order_by(rounds.c.day.desc(), rounds.c.hour.desc(), rounds.c.id.desc())
+            .limit(max(1, int(backward_rounds) + 1))
+        ).all()
+        window_round_ids = [row[0] for row in round_window]
         payload: dict[str, float] = {"stress": 0.0, "reward": 0.0}
         for variable in ("stress", "reward"):
             exact = connection.execute(
                 select(stress_reward.c.value)
-                .where(stress_reward.c.uid == int(user_id))
+                .where(stress_reward.c.uid == user_id)
                 .where(stress_reward.c.variable == variable)
                 .where(stress_reward.c.type == "aggregate")
                 .where(stress_reward.c.tid == current_round_id)
@@ -638,29 +718,37 @@ class ExperimentDatabase:
                 payload[variable] = _clamp01(exact[0])
                 continue
 
-            anchor_tid = min_round_id - 1
             anchor_value = 0.0
             anchor_row = connection.execute(
-                select(stress_reward.c.tid, stress_reward.c.value)
-                .where(stress_reward.c.uid == int(user_id))
+                select(stress_reward.c.tid, stress_reward.c.value, rounds.c.day, rounds.c.hour)
+                .select_from(stress_reward.join(rounds, rounds.c.id == stress_reward.c.tid))
+                .where(stress_reward.c.uid == user_id)
                 .where(stress_reward.c.variable == variable)
                 .where(stress_reward.c.type == "aggregate")
-                .where(stress_reward.c.tid < current_round_id)
-                .order_by(stress_reward.c.tid.desc())
+                .where(
+                    (rounds.c.day < int(current_round["day"]))
+                    | (
+                        (rounds.c.day == int(current_round["day"]))
+                        & (rounds.c.hour < int(current_round["hour"]))
+                    )
+                )
+                .order_by(rounds.c.day.desc(), rounds.c.hour.desc(), stress_reward.c.tid.desc())
                 .limit(1)
             ).first()
+            anchor_tid = None
             if anchor_row is not None:
-                anchor_tid = int(anchor_row[0])
+                anchor_tid = anchor_row[0]
                 anchor_value = float(anchor_row[1] or 0.0)
-
-            variation_sum = connection.execute(
+            variation_statement = (
                 select(func.coalesce(func.sum(stress_reward.c.value), 0.0))
-                .where(stress_reward.c.uid == int(user_id))
+                .where(stress_reward.c.uid == user_id)
                 .where(stress_reward.c.variable == variable)
                 .where(stress_reward.c.type == "variation")
-                .where(stress_reward.c.tid > int(anchor_tid))
-                .where(stress_reward.c.tid <= current_round_id)
-            ).scalar()
+                .where(stress_reward.c.tid.in_(tuple(window_round_ids)))
+            )
+            if anchor_tid is not None:
+                variation_statement = variation_statement.where(stress_reward.c.tid != anchor_tid)
+            variation_sum = connection.execute(variation_statement).scalar()
             payload[variable] = _clamp01(anchor_value + float(variation_sum or 0.0))
         return payload
 
@@ -668,8 +756,8 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        user_id: int,
-        round_id: int,
+        user_id: Any,
+        round_id: Any,
         variations: list[dict[str, Any]],
         action_name: str | None = None,
         aggregate_state: dict[str, float] | None = None,
@@ -691,12 +779,12 @@ class ExperimentDatabase:
             connection.execute(
                 stress_reward.insert().values(
                     id=str(uuid.uuid4()),
-                    uid=int(user_id),
+                    uid=user_id,
                     variable=variable,
                     value=value,
                     type="variation",
                     action=(str(action_name).strip() if action_name else None),
-                    tid=int(round_id),
+                    tid=round_id,
                 )
             )
             written += 1
@@ -708,22 +796,22 @@ class ExperimentDatabase:
                 current_value = _clamp01(aggregate_state.get(variable))
                 existing = connection.execute(
                     select(stress_reward.c.id)
-                    .where(stress_reward.c.uid == int(user_id))
+                    .where(stress_reward.c.uid == user_id)
                     .where(stress_reward.c.variable == variable)
                     .where(stress_reward.c.type == "aggregate")
-                    .where(stress_reward.c.tid == int(round_id))
+                    .where(stress_reward.c.tid == round_id)
                     .limit(1)
                 ).first()
                 if existing is None:
                     connection.execute(
                         stress_reward.insert().values(
                             id=str(uuid.uuid4()),
-                            uid=int(user_id),
+                            uid=user_id,
                             variable=variable,
                             value=current_value,
                             type="aggregate",
                             action=None,
-                            tid=int(round_id),
+                            tid=round_id,
                         )
                     )
                 else:
@@ -742,8 +830,8 @@ class ExperimentDatabase:
         connection: Connection,
         *,
         text: str,
-        post_id: int,
-        round_id: int,
+        post_id: Any,
+        round_id: Any,
     ) -> None:
         if not text or not self.has_table(connection, "mentions"):
             return
@@ -767,20 +855,20 @@ class ExperimentDatabase:
             return
 
         existing_user_ids = {
-            int(row[0])
+            str(_raw_id(row[0]))
             for row in connection.execute(
-                select(mention_table.c.user_id).where(mention_table.c.post_id == int(post_id))
+                select(mention_table.c.user_id).where(mention_table.c.post_id == post_id)
             ).all()
         }
         for row in rows:
-            user_id = int(row["id"])
-            if user_id in existing_user_ids:
+            user_id = _raw_id(row["id"])
+            if str(user_id) in existing_user_ids:
                 continue
             connection.execute(
                 mention_table.insert().values(
                     user_id=user_id,
-                    post_id=int(post_id),
-                    round=int(round_id),
+                    post_id=post_id,
+                    round=round_id,
                     answered=0,
                 )
             )
@@ -789,7 +877,7 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        post_id: int,
+        post_id: Any,
         topic_ids: list[int] | tuple[int, ...] | None,
     ) -> None:
         if not topic_ids or not self.has_table(connection, "post_topics"):
@@ -798,7 +886,7 @@ class ExperimentDatabase:
         existing_topic_ids = {
             int(row[0])
             for row in connection.execute(
-                select(post_topics.c.topic_id).where(post_topics.c.post_id == int(post_id))
+                select(post_topics.c.topic_id).where(post_topics.c.post_id == post_id)
             ).all()
         }
         for topic_id in topic_ids:
@@ -807,7 +895,7 @@ class ExperimentDatabase:
                 continue
             connection.execute(
                 post_topics.insert().values(
-                    post_id=int(post_id),
+                    post_id=post_id,
                     topic_id=topic_id,
                 )
             )
@@ -816,22 +904,37 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        user_id: int,
+        user_id: Any,
         topic_id: int,
-        current_round_id: int | None = None,
+        current_round_id: Any | None = None,
     ) -> float | None:
         if not self.has_table(connection, "agent_opinion"):
             return None
         agent_opinion = self.table("agent_opinion")
+        rounds = self.table("rounds")
         statement = (
-            select(agent_opinion.c.opinion)
-            .where(agent_opinion.c.agent_id == int(user_id))
+            select(agent_opinion.c.opinion, rounds.c.day, rounds.c.hour, agent_opinion.c.id)
+            .select_from(agent_opinion.join(rounds, rounds.c.id == agent_opinion.c.tid))
+            .where(agent_opinion.c.agent_id == user_id)
             .where(agent_opinion.c.topic_id == int(topic_id))
         )
         if current_round_id is not None:
-            statement = statement.where(agent_opinion.c.tid <= int(current_round_id))
+            current_round = connection.execute(
+                select(rounds.c.day, rounds.c.hour)
+                .where(rounds.c.id == current_round_id)
+                .limit(1)
+            ).mappings().first()
+            if current_round is None:
+                return None
+            statement = statement.where(
+                (rounds.c.day < int(current_round["day"]))
+                | (
+                    (rounds.c.day == int(current_round["day"]))
+                    & (rounds.c.hour <= int(current_round["hour"]))
+                )
+            )
         row = connection.execute(
-            statement.order_by(agent_opinion.c.tid.desc(), agent_opinion.c.id.desc()).limit(1)
+            statement.order_by(rounds.c.day.desc(), rounds.c.hour.desc(), agent_opinion.c.id.desc()).limit(1)
         ).first()
         return None if row is None else float(row[0])
 
@@ -839,16 +942,16 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        user_id: int,
+        user_id: Any,
         topic_id: int,
         opinion: float,
-        round_id: int,
+        round_id: Any,
     ) -> bool:
         if not self.has_table(connection, "agent_opinion"):
             return False
         current = self.get_latest_agent_opinion(
             connection,
-            user_id=int(user_id),
+            user_id=user_id,
             topic_id=int(topic_id),
             current_round_id=None,
         )
@@ -857,8 +960,8 @@ class ExperimentDatabase:
         agent_opinion = self.table("agent_opinion")
         connection.execute(
             agent_opinion.insert().values(
-                agent_id=int(user_id),
-                tid=int(round_id),
+                agent_id=user_id,
+                tid=round_id,
                 topic_id=int(topic_id),
                 id_interacted_with=-1,
                 id_post=-1,
@@ -873,35 +976,53 @@ class ExperimentDatabase:
         connection: Connection,
         *,
         topic_id: int,
-        current_round_id: int | None = None,
-    ) -> tuple[dict[str, float | int], ...]:
+        current_round_id: Any | None = None,
+    ) -> tuple[dict[str, Any], ...]:
         if not self.has_table(connection, "agent_opinion"):
             return ()
         agent_opinion = self.table("agent_opinion")
+        rounds = self.table("rounds")
         statement = select(
             agent_opinion.c.agent_id,
             agent_opinion.c.opinion,
             agent_opinion.c.tid,
             agent_opinion.c.id,
-        ).where(agent_opinion.c.topic_id == int(topic_id))
+            rounds.c.day,
+            rounds.c.hour,
+        ).select_from(agent_opinion.join(rounds, rounds.c.id == agent_opinion.c.tid)).where(agent_opinion.c.topic_id == int(topic_id))
         if current_round_id is not None:
-            statement = statement.where(agent_opinion.c.tid <= int(current_round_id))
+            current_round = connection.execute(
+                select(rounds.c.day, rounds.c.hour)
+                .where(rounds.c.id == current_round_id)
+                .limit(1)
+            ).mappings().first()
+            if current_round is None:
+                return ()
+            statement = statement.where(
+                (rounds.c.day < int(current_round["day"]))
+                | (
+                    (rounds.c.day == int(current_round["day"]))
+                    & (rounds.c.hour <= int(current_round["hour"]))
+                )
+            )
         rows = connection.execute(
             statement.order_by(
                 agent_opinion.c.agent_id.asc(),
-                agent_opinion.c.tid.desc(),
+                rounds.c.day.desc(),
+                rounds.c.hour.desc(),
                 agent_opinion.c.id.desc(),
             )
         ).mappings().all()
-        latest: dict[int, dict[str, float | int]] = {}
+        latest: dict[str, dict[str, Any]] = {}
         for row in rows:
-            agent_id = int(row["agent_id"])
-            if agent_id in latest:
+            agent_id = _raw_id(row["agent_id"])
+            agent_key = str(agent_id)
+            if agent_key in latest:
                 continue
-            latest[agent_id] = {
+            latest[agent_key] = {
                 "user_id": agent_id,
                 "opinion": float(row["opinion"]),
-                "round_id": int(row["tid"]),
+                "round_id": _raw_id(row["tid"]),
             }
         return tuple(latest.values())
 
@@ -943,16 +1064,19 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        thread_id: int,
+        thread_id: Any,
         limit: int = 20,
     ) -> tuple[PostRecord, ...]:
         post = self.table("post")
+        rounds = self.table("rounds")
         statement = (
             select(
                 post.c.id,
                 post.c.user_id,
                 post.c.tweet,
                 post.c.round,
+                rounds.c.day.label("round_day"),
+                rounds.c.hour.label("round_hour"),
                 post.c.comment_to,
                 post.c.thread_id,
                 post.c.shared_from,
@@ -965,20 +1089,23 @@ class ExperimentDatabase:
                 literal(None).label("toxicity"),
                 literal(0).label("reported_count"),
             )
-            .where((post.c.id == int(thread_id)) | (post.c.thread_id == int(thread_id)))
-            .order_by(post.c.id.asc())
+            .select_from(post.join(rounds, rounds.c.id == post.c.round))
+            .where((post.c.id == thread_id) | (post.c.thread_id == thread_id))
+            .order_by(rounds.c.day.asc(), rounds.c.hour.asc(), post.c.id.asc())
             .limit(int(limit))
         )
         rows = connection.execute(statement).mappings().all()
         return tuple(
             PostRecord(
-                id=int(row["id"]),
-                author_id=int(row["user_id"]),
+                id=_raw_id(row["id"]),
+                author_id=_raw_id(row["user_id"]),
                 text=str(row["tweet"]),
-                round_id=int(row["round"]),
-                comment_to=_nullable_int(row["comment_to"]),
-                thread_id=_nullable_int(row["thread_id"]),
-                shared_from=_nullable_int(row["shared_from"]),
+                round_id=_raw_id(row["round"]),
+                comment_to=_nullable_id(row["comment_to"]),
+                thread_id=_nullable_id(row["thread_id"]),
+                shared_from=_nullable_id(row["shared_from"]),
+                round_day=int(row["round_day"]) if row["round_day"] is not None else None,
+                round_slot=int(row["round_hour"]) if row["round_hour"] is not None else None,
                 moderated=int(row["moderated"] or 0),
                 is_moderation_comment=int(row["is_moderation_comment"] or 0),
                 toxicity=None,
@@ -991,59 +1118,68 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        thread_id: int,
-        user_id: int,
-        after_round_id: int | None = None,
+        thread_id: Any,
+        user_id: Any,
+        after_round_id: Any | None = None,
     ) -> PostRecord | None:
         posts = self.get_thread_posts(connection, thread_id=thread_id, limit=200)
         candidates = [
             post
             for post in posts
-            if post.author_id == int(user_id)
-            and (after_round_id is None or post.round_id > int(after_round_id))
+            if str(post.author_id) == str(user_id)
+            and (
+                after_round_id is None
+                or post.round_ordinal > self._round_ordinal_for_id(connection, after_round_id)
+            )
         ]
         if not candidates:
             return None
-        return max(candidates, key=lambda post: (post.round_id, post.id))
+        return max(candidates, key=lambda post: (post.round_ordinal, str(post.id)))
 
     def get_latest_thread_post_excluding_users(
         self,
         connection: Connection,
         *,
-        thread_id: int,
-        excluded_user_ids: set[int] | list[int] | tuple[int, ...],
-        after_round_id: int | None = None,
+        thread_id: Any,
+        excluded_user_ids: set[Any] | list[Any] | tuple[Any, ...],
+        after_round_id: Any | None = None,
     ) -> PostRecord | None:
-        excluded = {int(user_id) for user_id in excluded_user_ids}
+        excluded = {str(user_id) for user_id in excluded_user_ids}
         posts = self.get_thread_posts(connection, thread_id=thread_id, limit=200)
         candidates = [
             post
             for post in posts
-            if int(post.author_id) not in excluded
-            and (after_round_id is None or int(post.round_id) > int(after_round_id))
+            if str(post.author_id) not in excluded
+            and (
+                after_round_id is None
+                or post.round_ordinal > self._round_ordinal_for_id(connection, after_round_id)
+            )
         ]
         if not candidates:
             return None
-        return max(candidates, key=lambda post: (post.round_id, post.id))
+        return max(candidates, key=lambda post: (post.round_ordinal, str(post.id)))
 
     def get_posts_by_author_ids_since_round(
         self,
         connection: Connection,
         *,
-        author_ids: list[int] | tuple[int, ...] | set[int],
+        author_ids: list[Any] | tuple[Any, ...] | set[Any],
         min_round_id: int,
         limit: int = 100,
     ) -> tuple[PostRecord, ...]:
-        author_ids = [int(author_id) for author_id in author_ids]
+        author_ids = list(author_ids)
         if not author_ids:
             return ()
         post = self.table("post")
+        rounds = self.table("rounds")
         rows = connection.execute(
             select(
                 post.c.id,
                 post.c.user_id,
                 post.c.tweet,
                 post.c.round,
+                rounds.c.day.label("round_day"),
+                rounds.c.hour.label("round_hour"),
                 post.c.comment_to,
                 post.c.thread_id,
                 post.c.shared_from,
@@ -1056,20 +1192,23 @@ class ExperimentDatabase:
                 literal(None).label("toxicity"),
                 literal(0).label("reported_count"),
             )
+            .select_from(post.join(rounds, rounds.c.id == post.c.round))
             .where(post.c.user_id.in_(author_ids))
-            .where(post.c.round >= int(min_round_id))
-            .order_by(post.c.round.desc(), post.c.id.desc())
+            .where((rounds.c.day * 24 + rounds.c.hour) >= int(min_round_id))
+            .order_by(rounds.c.day.desc(), rounds.c.hour.desc(), post.c.id.desc())
             .limit(int(limit))
         ).mappings().all()
         return tuple(
             PostRecord(
-                id=int(row["id"]),
-                author_id=int(row["user_id"]),
+                id=_raw_id(row["id"]),
+                author_id=_raw_id(row["user_id"]),
                 text=str(row["tweet"]),
-                round_id=int(row["round"]),
-                comment_to=_nullable_int(row["comment_to"]),
-                thread_id=_nullable_int(row["thread_id"]),
-                shared_from=_nullable_int(row["shared_from"]),
+                round_id=_raw_id(row["round"]),
+                comment_to=_nullable_id(row["comment_to"]),
+                thread_id=_nullable_id(row["thread_id"]),
+                shared_from=_nullable_id(row["shared_from"]),
+                round_day=int(row["round_day"]) if row["round_day"] is not None else None,
+                round_slot=int(row["round_hour"]) if row["round_hour"] is not None else None,
                 moderated=int(row["moderated"] or 0),
                 is_moderation_comment=int(row["is_moderation_comment"] or 0),
                 toxicity=None,
@@ -1083,32 +1222,32 @@ class ExperimentDatabase:
         connection: Connection,
         *,
         username: str,
-    ) -> set[int]:
+    ) -> set[Any]:
         if not self.has_table(connection, "follow"):
             return set()
         follow = self.table("follow")
         user_id = self.get_user_id(connection, username)
         rows = connection.execute(
             select(follow.c.follower_id, follow.c.action)
-            .where(follow.c.user_id == int(user_id))
+            .where(follow.c.user_id == user_id)
             .order_by(follow.c.round.asc(), follow.c.id.asc())
         ).all()
-        followed: set[int] = set()
+        followed: set[Any] = set()
         for target_id, action in rows:
             if str(action or "").strip().lower() == "follow":
-                followed.add(int(target_id))
+                followed.add(_raw_id(target_id))
             elif str(action or "").strip().lower() == "unfollow":
-                followed.discard(int(target_id))
+                followed.discard(_raw_id(target_id))
         return followed
 
     def insert_propaganda_activity(
         self,
         connection: Connection,
         *,
-        target_uid: int,
-        propaganda_agent_uid: int,
-        thread_id: int,
-        discussion_round_id: int,
+        target_uid: Any,
+        propaganda_agent_uid: Any,
+        thread_id: Any,
+        discussion_round_id: Any,
         target_opinion: float | None,
         topic_id: int,
     ) -> int:
@@ -1116,10 +1255,10 @@ class ExperimentDatabase:
         result = connection.execute(
             activity.insert()
             .values(
-                target_uid=int(target_uid),
-                propaganda_agent_uid=int(propaganda_agent_uid),
-                thread_id=int(thread_id),
-                discussion_round_id=int(discussion_round_id),
+                target_uid=target_uid,
+                propaganda_agent_uid=propaganda_agent_uid,
+                thread_id=thread_id,
+                discussion_round_id=discussion_round_id,
                 target_opinion=target_opinion,
                 topic_id=int(topic_id),
             )
@@ -1133,8 +1272,8 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        propaganda_agent_uid: int,
-        thread_id: int,
+        propaganda_agent_uid: Any,
+        thread_id: Any,
     ) -> int:
         if not self.has_table(connection, "propaganda_activity"):
             return 0
@@ -1142,8 +1281,8 @@ class ExperimentDatabase:
         row = connection.execute(
             select(func.count())
             .select_from(activity)
-            .where(activity.c.propaganda_agent_uid == int(propaganda_agent_uid))
-            .where(activity.c.thread_id == int(thread_id))
+            .where(activity.c.propaganda_agent_uid == propaganda_agent_uid)
+            .where(activity.c.thread_id == thread_id)
         ).first()
         return int(row[0] or 0)
 
@@ -1151,14 +1290,14 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        propaganda_agent_uid: int,
-    ) -> dict[str, int | float | None] | None:
+        propaganda_agent_uid: Any,
+    ) -> dict[str, Any] | None:
         if not self.has_table(connection, "propaganda_activity"):
             return None
         activity = self.table("propaganda_activity")
         row = connection.execute(
             select(activity)
-            .where(activity.c.propaganda_agent_uid == int(propaganda_agent_uid))
+            .where(activity.c.propaganda_agent_uid == propaganda_agent_uid)
             .order_by(activity.c.id.desc())
             .limit(1)
         ).mappings().first()
@@ -1166,10 +1305,10 @@ class ExperimentDatabase:
             return None
         return {
             "id": int(row["id"]),
-            "target_uid": int(row["target_uid"]),
-            "propaganda_agent_uid": int(row["propaganda_agent_uid"]),
-            "thread_id": int(row["thread_id"]),
-            "discussion_round_id": int(row["discussion_round_id"]),
+            "target_uid": _raw_id(row["target_uid"]),
+            "propaganda_agent_uid": _raw_id(row["propaganda_agent_uid"]),
+            "thread_id": _raw_id(row["thread_id"]),
+            "discussion_round_id": _raw_id(row["discussion_round_id"]),
             "target_opinion": (
                 None if row["target_opinion"] is None else float(row["target_opinion"])
             ),
@@ -1180,27 +1319,28 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        propaganda_agent_uid: int,
-    ) -> tuple[dict[str, int | float | None], ...]:
+        propaganda_agent_uid: Any,
+    ) -> tuple[dict[str, Any], ...]:
         if not self.has_table(connection, "propaganda_activity"):
             return ()
         activity = self.table("propaganda_activity")
         rows = connection.execute(
             select(activity)
-            .where(activity.c.propaganda_agent_uid == int(propaganda_agent_uid))
+            .where(activity.c.propaganda_agent_uid == propaganda_agent_uid)
             .order_by(activity.c.thread_id.asc(), activity.c.id.desc())
         ).mappings().all()
-        latest: dict[int, dict[str, int | float | None]] = {}
+        latest: dict[str, dict[str, Any]] = {}
         for row in rows:
-            thread_id = int(row["thread_id"])
-            if thread_id in latest:
+            thread_id = _raw_id(row["thread_id"])
+            thread_key = str(thread_id)
+            if thread_key in latest:
                 continue
-            latest[thread_id] = {
+            latest[thread_key] = {
                 "id": int(row["id"]),
-                "target_uid": int(row["target_uid"]),
-                "propaganda_agent_uid": int(row["propaganda_agent_uid"]),
+                "target_uid": _raw_id(row["target_uid"]),
+                "propaganda_agent_uid": _raw_id(row["propaganda_agent_uid"]),
                 "thread_id": thread_id,
-                "discussion_round_id": int(row["discussion_round_id"]),
+                "discussion_round_id": _raw_id(row["discussion_round_id"]),
                 "target_opinion": (
                     None if row["target_opinion"] is None else float(row["target_opinion"])
                 ),
@@ -1251,10 +1391,10 @@ class ExperimentDatabase:
         connection: Connection,
         *,
         moderator_username: str,
-        moderated_post_id: int,
+        moderated_post_id: Any,
         moderation_type: str,
-        round_id: int,
-        generated_comment_id: int | None = None,
+        round_id: Any,
+        generated_comment_id: Any | None = None,
     ) -> int:
         actions = self.table("plugin_moderation_actions")
         moderated_agent_id = self.get_post_author_id(connection, moderated_post_id)
@@ -1284,9 +1424,9 @@ class ExperimentDatabase:
         connection: Connection,
         *,
         message_type: str,
-        to_user_id: int,
+        to_user_id: Any,
         message: str,
-        from_round: int,
+        from_round: Any,
         duration: int,
     ) -> int:
         sys_messages = self.table("sys_messages")
@@ -1299,7 +1439,11 @@ class ExperimentDatabase:
         if "duration" in sys_messages.c:
             values["duration"] = duration
         elif "to_round" in sys_messages.c:
-            values["to_round"] = from_round + duration
+            values["to_round"] = self._round_id_after_offset(
+                connection,
+                start_round_id=from_round,
+                offset=duration,
+            )
         else:
             raise RuntimeError("sys_messages table exposes neither duration nor to_round")
         result = connection.execute(
@@ -1311,7 +1455,7 @@ class ExperimentDatabase:
         connection.commit()
         return message_id
 
-    def mark_post_moderated(self, connection: Connection, *, post_id: int) -> None:
+    def mark_post_moderated(self, connection: Connection, *, post_id: Any) -> None:
         post = self.table("post")
         if "moderated" not in post.c:
             raise RuntimeError("post table does not expose a moderated column")
@@ -1324,7 +1468,7 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        moderated_agent_id: int,
+        moderated_agent_id: Any,
     ) -> None:
         counts = self.table("plugin_moderation_counts")
         existing = connection.execute(
@@ -1368,18 +1512,20 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        user_id: int,
-        current_round_id: int,
+        user_id: Any,
+        current_round_id: Any,
         window_rounds: int,
     ) -> int:
         actions = self.table("plugin_moderation_actions")
-        lower_bound = max(0, int(current_round_id) - max(0, int(window_rounds)))
+        current_round_ordinal = self._round_ordinal_for_id(connection, current_round_id)
+        lower_bound = max(0, current_round_ordinal - max(0, int(window_rounds)))
+        rounds = self.table("rounds")
         row = connection.execute(
             select(func.count())
-            .select_from(actions)
-            .where(actions.c.moderated_agent_id == int(user_id))
-            .where(actions.c.round_id >= lower_bound)
-            .where(actions.c.round_id <= int(current_round_id))
+            .select_from(actions.join(rounds, rounds.c.id == actions.c.round_id))
+            .where(actions.c.moderated_agent_id == user_id)
+            .where((rounds.c.day * 24 + rounds.c.hour) >= lower_bound)
+            .where((rounds.c.day * 24 + rounds.c.hour) <= current_round_ordinal)
         ).first()
         return int(row[0] or 0)
 
@@ -1387,8 +1533,8 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        user_id: int,
-        start_tid: int,
+        user_id: Any,
+        start_tid: Any,
         duration: int,
     ) -> None:
         if not self.has_table(connection, "shadow_ban"):
@@ -1396,15 +1542,15 @@ class ExperimentDatabase:
         shadow_ban = self.table("shadow_ban")
         existing = connection.execute(
             select(shadow_ban.c.uid)
-            .where(shadow_ban.c.uid == int(user_id))
-            .where(shadow_ban.c.start_tid == int(start_tid))
+            .where(shadow_ban.c.uid == user_id)
+            .where(shadow_ban.c.start_tid == start_tid)
             .limit(1)
         ).first()
         if existing is None:
             connection.execute(
                 shadow_ban.insert().values(
-                    uid=int(user_id),
-                    start_tid=int(start_tid),
+                    uid=user_id,
+                    start_tid=start_tid,
                     duration=int(duration),
                 )
             )
@@ -1414,24 +1560,24 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        user_id: int,
-        round_id: int,
+        user_id: Any,
+        round_id: Any,
     ) -> None:
         user_mgmt = self.table("user_mgmt")
         if "left_on" in user_mgmt.c:
             connection.execute(
-                user_mgmt.update().where(user_mgmt.c.id == int(user_id)).values(left_on=int(round_id))
+                user_mgmt.update().where(user_mgmt.c.id == user_id).values(left_on=round_id)
             )
         if self.has_table(connection, "banned"):
             banned = self.table("banned")
             existing = connection.execute(
-                select(banned.c.uid).where(banned.c.uid == int(user_id)).limit(1)
+                select(banned.c.uid).where(banned.c.uid == user_id).limit(1)
             ).first()
             if existing is None:
                 connection.execute(
                     banned.insert().values(
-                        uid=int(user_id),
-                        tid=int(round_id),
+                        uid=user_id,
+                        tid=round_id,
                     )
                 )
         connection.commit()
@@ -1440,18 +1586,18 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        user_id: int,
+        user_id: Any,
     ) -> bool:
         user_mgmt = self.table("user_mgmt")
         if "left_on" in user_mgmt.c:
             row = connection.execute(
-                select(user_mgmt.c.left_on).where(user_mgmt.c.id == int(user_id)).limit(1)
+                select(user_mgmt.c.left_on).where(user_mgmt.c.id == user_id).limit(1)
             ).first()
             return row is not None and row[0] is not None
         if self.has_table(connection, "banned"):
             banned = self.table("banned")
             row = connection.execute(
-                select(banned.c.uid).where(banned.c.uid == int(user_id)).limit(1)
+                select(banned.c.uid).where(banned.c.uid == user_id).limit(1)
             ).first()
             return row is not None
         return False
@@ -1460,20 +1606,26 @@ class ExperimentDatabase:
         self,
         connection: Connection,
         *,
-        user_id: int,
-        current_round_id: int,
+        user_id: Any,
+        current_round_id: Any,
     ) -> bool:
         if not self.has_table(connection, "shadow_ban"):
             return False
         shadow_ban = self.table("shadow_ban")
-        row = connection.execute(
-            select(shadow_ban.c.uid)
-            .where(shadow_ban.c.uid == int(user_id))
-            .where(shadow_ban.c.start_tid <= int(current_round_id))
-            .where((shadow_ban.c.duration.is_(None)) | ((shadow_ban.c.start_tid + shadow_ban.c.duration) >= int(current_round_id)))
-            .limit(1)
-        ).first()
-        return row is not None
+        rows = connection.execute(
+            select(shadow_ban.c.uid, shadow_ban.c.start_tid, shadow_ban.c.duration)
+            .where(shadow_ban.c.uid == user_id)
+        ).all()
+        current_ordinal = self._round_ordinal_for_id(connection, current_round_id)
+        for _uid, start_tid, duration in rows:
+            start_ordinal = self._round_ordinal_for_id(connection, start_tid)
+            if start_ordinal > current_ordinal:
+                continue
+            if duration in (None, ""):
+                return True
+            if start_ordinal + int(duration) >= current_ordinal:
+                return True
+        return False
 
     def seed_table_rows(
         self,
@@ -1496,29 +1648,29 @@ class ExperimentDatabase:
                 connection.execute(table.insert().values(**row))
         connection.commit()
 
-    def get_post_author_id(self, connection: Connection, post_id: int) -> int:
+    def get_post_author_id(self, connection: Connection, post_id: Any) -> Any:
         post = self.table("post")
         row = connection.execute(
             select(post.c.user_id).where(post.c.id == post_id).limit(1)
         ).first()
         if row is None:
             raise RuntimeError(f"Post '{post_id}' not found in post table")
-        return int(row[0])
+        return _raw_id(row[0])
 
     def get_thread_post_count_for_post(
         self,
         connection: Connection,
         *,
-        post_id: int,
+        post_id: Any,
     ) -> int:
         post = self.table("post")
         row = connection.execute(
-            select(post.c.id, post.c.thread_id).where(post.c.id == int(post_id)).limit(1)
+            select(post.c.id, post.c.thread_id).where(post.c.id == post_id).limit(1)
         ).mappings().first()
         if row is None:
             raise RuntimeError(f"Post '{post_id}' not found in post table")
-        thread_id = _nullable_int(row["thread_id"]) or int(row["id"])
-        return len(self.get_thread_posts(connection, thread_id=int(thread_id), limit=500))
+        thread_id = _nullable_id(row["thread_id"]) or _raw_id(row["id"])
+        return len(self.get_thread_posts(connection, thread_id=thread_id, limit=500))
 
     def count_rows(self, connection: Connection, table_name: str) -> int:
         table = self.table(table_name)
@@ -1531,10 +1683,23 @@ class ExperimentDatabase:
         *,
         table_name: str,
         user_column: str,
-        user_id: int,
+        user_id: Any,
         day: int,
     ) -> int:
+        if not self.has_table(connection, table_name):
+            return 0
         table = self.table(table_name)
+        if table_name == "activity_logs" and "round_id" in table.c:
+            lower_bound = int(day) * 24
+            upper_bound = lower_bound + 23
+            row = connection.execute(
+                select(func.count())
+                .select_from(table)
+                .where(getattr(table.c, user_column) == user_id)
+                .where(table.c.round_id >= lower_bound)
+                .where(table.c.round_id <= upper_bound)
+            ).first()
+            return int(row[0] or 0)
         rounds = self.table("rounds")
         round_column = (
             table.c.round_id
@@ -1544,14 +1709,49 @@ class ExperimentDatabase:
         row = connection.execute(
             select(func.count())
             .select_from(table.join(rounds, rounds.c.id == round_column))
-            .where(getattr(table.c, user_column) == int(user_id))
+            .where(getattr(table.c, user_column) == user_id)
             .where(rounds.c.day == int(day))
         ).first()
         return int(row[0] or 0)
 
+    def _round_id_after_offset(
+        self,
+        connection: Connection,
+        *,
+        start_round_id: Any,
+        offset: int,
+    ) -> Any:
+        rounds = self.table("rounds")
+        ordered = connection.execute(
+            select(rounds.c.id)
+            .order_by(rounds.c.day.asc(), rounds.c.hour.asc(), rounds.c.id.asc())
+        ).all()
+        if not ordered:
+            return start_round_id
+        round_ids = [_raw_id(row[0]) for row in ordered]
+        try:
+            start_index = next(
+                idx for idx, candidate in enumerate(round_ids) if str(candidate) == str(start_round_id)
+            )
+        except StopIteration:
+            return start_round_id
+        target_index = max(0, min(len(round_ids) - 1, start_index + int(offset)))
+        return round_ids[target_index]
+
     def _validate_connectivity(self) -> None:
         with self.engine.connect() as connection:
             connection.execute(text("SELECT 1"))
+
+    def _id_sql_type(self, connection: Connection):
+        rounds = self.table("rounds")
+        row = connection.execute(select(rounds.c.id).limit(1)).first()
+        if row is None or row[0] is None:
+            return Integer
+        value = row[0]
+        if isinstance(value, int):
+            return Integer
+        text_value = str(value).strip()
+        return Integer if text_value.isdigit() else String(64)
 
     def _max_score_expr(self, *columns):
         if not columns:
@@ -1584,16 +1784,31 @@ class ExperimentDatabase:
             raise FileNotFoundError(f"Experiment database not found: {resolved}")
         return f"sqlite:///{resolved}"
 
+    def _round_ordinal_for_id(self, connection: Connection, round_id: Any) -> int:
+        rounds = self.table("rounds")
+        row = connection.execute(
+            select(rounds.c.day, rounds.c.hour).where(rounds.c.id == round_id).limit(1)
+        ).first()
+        if row is None:
+            return 0
+        return int(row[0]) * 24 + int(row[1])
+
     @staticmethod
     def _round_from_row(row: RowMapping) -> SimulationRound:
-        return SimulationRound(id=int(row["id"]), day=int(row["day"]), slot=int(row["hour"]))
+        return SimulationRound(id=_raw_id(row["id"]), day=int(row["day"]), slot=int(row["hour"]))
 
 
-def _nullable_int(value: object) -> int | None:
+def _raw_id(value: object) -> Any:
     if value is None:
         return None
-    numeric = int(value)
-    return None if numeric < 0 else numeric
+    return value
+
+
+def _nullable_id(value: object) -> Any | None:
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    return None if text_value == "-1" else value
 
 
 def _clamp01(value: Any) -> float:
