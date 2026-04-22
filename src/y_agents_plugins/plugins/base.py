@@ -15,6 +15,15 @@ class BaseAgentPlugin(ABC):
     """Base contract for one deployable agent type bound to a client instance."""
 
     agent_type: str
+    _PLUGIN_USER_TYPES = {
+        "hello_world",
+        "moderator",
+        "propaganda",
+        "master_of_puppets",
+        "mop_puppet",
+        "stress_attacker",
+        "comic_relief",
+    }
 
     def __init__(self, settings: dict | None = None, llm_client=None):
         self.settings = dict(settings or {})
@@ -32,6 +41,13 @@ class BaseAgentPlugin(ABC):
     @abstractmethod
     def on_tick(self, context: AgentContext, agent: AgentSpec) -> list[AgentAction]:
         """Run one simulation step in sync with the experiment loop."""
+
+    @classmethod
+    def _is_plugin_user(cls, user) -> bool:
+        return (
+            str(getattr(user, "user_type", "") or "").strip().lower()
+            in cls._PLUGIN_USER_TYPES
+        )
 
 
 class AgentTypeRegistry:

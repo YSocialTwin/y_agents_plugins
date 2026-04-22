@@ -73,6 +73,12 @@ class ActionExecutor:
                 action=action,
             )
         elif action.action_type == "CREATE_COMMENT":
+            if self.database.user_has_commented_on_parent_post(
+                connection,
+                username=actor_username,
+                parent_post_id=action.payload["parent_post_id"],
+            ):
+                return
             comment_id = self.database.create_comment(
                 connection,
                 username=actor_username,

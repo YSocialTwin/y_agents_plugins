@@ -25,16 +25,6 @@ class ComicReliefAgent(BaseAgentPlugin):
         "or humiliation. The goal is to ease tension, not escalate it."
     )
     _DEFAULT_STYLES = ["dad_jokes"]
-    _PLUGIN_USER_TYPES = {
-        "hello_world",
-        "moderator",
-        "propaganda",
-        "master_of_puppets",
-        "mop_puppet",
-        "stress_attacker",
-        "comic_relief",
-    }
-
     def on_tick(self, context: AgentContext, agent: AgentSpec) -> list[AgentAction]:
         target_post = self._select_target_post(context=context, agent=agent)
         if target_post is None:
@@ -106,8 +96,13 @@ class ComicReliefAgent(BaseAgentPlugin):
             user = self._safe_user_by_id(post.author_id, users=context.users)
             if user is None:
                 continue
-            user_type = str(user.user_type or "").strip().lower()
-            if user_type in self._PLUGIN_USER_TYPES:
+            if self._is_plugin_user(user):
+                continue
+            if context.connection is not None and self.database.user_has_commented_on_parent_post(
+                context.connection,
+                username=agent.username,
+                parent_post_id=post.id,
+            ):
                 continue
             candidates.append(post)
         if not candidates:

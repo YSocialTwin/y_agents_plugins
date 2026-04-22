@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import random
 import re
 import uuid
 from pathlib import Path
 from typing import Any
 
+from faker import Faker
 from sqlalchemy import (
     CheckConstraint,
     Column,
@@ -27,6 +29,39 @@ from sqlalchemy.pool import NullPool
 from y_agents_plugins.core.models import AgentSpec, PostRecord, SimulationRound, UserRecord
 
 
+_FAKER_NATIONALITY_LOCALES: dict[str, str] = {
+    "American": "en_US",
+    "Argentine": "es_AR",
+    "Brazilian": "pt_BR",
+    "British": "en_GB",
+    "Canadian": "en_CA",
+    "Chinese": "zh_CN",
+    "French": "fr_FR",
+    "German": "de_DE",
+    "Indian": "en_IN",
+    "Italian": "it_IT",
+    "Japanese": "ja_JP",
+    "Mexican": "es_MX",
+    "Portuguese": "pt_PT",
+    "Spanish": "es_ES",
+}
+
+_FAKER_LANGUAGE_LOCALES: dict[str, str] = {
+    "english": "en_US",
+    "en": "en_US",
+    "italian": "it_IT",
+    "it": "it_IT",
+    "spanish": "es_ES",
+    "es": "es_ES",
+    "french": "fr_FR",
+    "fr": "fr_FR",
+    "german": "de_DE",
+    "de": "de_DE",
+    "portuguese": "pt_PT",
+    "pt": "pt_PT",
+}
+
+
 class ExperimentDatabase:
     """SQLAlchemy gateway for experiment and plugin-owned tables."""
 
@@ -47,6 +82,7 @@ class ExperimentDatabase:
             self._configure_sqlite_engine(self.engine)
         self.metadata = MetaData()
         self._reflected_tables: dict[str, Table] = {}
+        self._faker_cache: dict[str, Faker] = {}
         self._validate_connectivity()
 
     def connect(self) -> Connection:
@@ -384,6 +420,11 @@ class ExperimentDatabase:
             post_id=post_id,
             round_id=round_id,
         )
+        self._insert_hashtags_for_text(
+            connection,
+            text=text,
+            post_id=post_id,
+        )
         self._insert_post_topics(
             connection,
             post_id=post_id,
@@ -433,6 +474,11 @@ class ExperimentDatabase:
             post_id=comment_id,
             round_id=round_id,
         )
+        self._insert_hashtags_for_text(
+            connection,
+            text=text,
+            post_id=comment_id,
+        )
         self._insert_post_topics(
             connection,
             post_id=comment_id,
@@ -440,6 +486,31 @@ class ExperimentDatabase:
         )
         connection.commit()
         return comment_id
+
+    def user_has_commented_on_parent_post(
+        self,
+        connection: Connection,
+        *,
+        username: str,
+        parent_post_id: Any,
+    ) -> bool:
+        if not self.has_table(connection, "post"):
+            return False
+        post = self.table("post")
+        user_mgmt = self.table("user_mgmt")
+        user_row = connection.execute(
+            select(user_mgmt.c.id).where(user_mgmt.c.username == username).limit(1)
+        ).first()
+        if user_row is None:
+            return False
+        user_id = _raw_id(user_row[0])
+        row = connection.execute(
+            select(post.c.id)
+            .where(post.c.user_id == user_id)
+            .where(post.c.comment_to == parent_post_id)
+            .limit(1)
+        ).first()
+        return row is not None
 
     def create_share(
         self,
@@ -481,6 +552,11 @@ class ExperimentDatabase:
             text=str(text or ""),
             post_id=share_id,
             round_id=round_id,
+        )
+        self._insert_hashtags_for_text(
+            connection,
+            text=str(text or ""),
+            post_id=share_id,
         )
         self._insert_post_topics(
             connection,
@@ -679,6 +755,59 @@ class ExperimentDatabase:
         connection.commit()
         current_id = update_values.get("id", existing[0])
         return _raw_id(current_id)
+
+    def generate_realistic_username(
+        self,
+        connection: Connection,
+        *,
+        existing_usernames: set[str] | None = None,
+        nationality: str | None = None,
+        language: str | None = None,
+        gender: str | None = None,
+    ) -> str:
+        known_usernames = {str(value).strip() for value in (existing_usernames or set()) if str(value).strip()}
+        sampled_gender = (
+            str(gender or "").strip().lower()
+            or self._sample_existing_choice(connection, "gender")
+            or random.choice(("male", "female"))
+        )
+        sampled_nationality = (
+            str(nationality or "").strip()
+            or self._sample_existing_choice(connection, "nationality")
+            or "American"
+        )
+        sampled_language = (
+            str(language or "").strip()
+            or self._sample_existing_choice(connection, "language")
+            or "English"
+        )
+        fake = self._faker_for_profile(
+            nationality=sampled_nationality,
+            language=sampled_language,
+        )
+
+        def _fake_attr(preferred: str, fallback: str) -> str:
+            if hasattr(fake, preferred):
+                return str(getattr(fake, preferred)())
+            return str(getattr(fake, fallback)())
+
+        if sampled_gender == "male":
+            first_name = _fake_attr("first_name_male", "first_name")
+        elif sampled_gender == "female":
+            first_name = _fake_attr("first_name_female", "first_name")
+        else:
+            first_name = _fake_attr("first_name", "name")
+        last_name = _fake_attr("last_name", "last_name")
+
+        base = self._normalize_generated_username(f"{first_name}_{last_name}")
+        if not base:
+            base = self._normalize_generated_username(fake.user_name())
+        candidate = base or f"user_{uuid.uuid4().hex[:8]}"
+        counter = 1
+        while candidate in known_usernames:
+            counter += 1
+            candidate = f"{base}_{counter}"
+        return candidate
 
     def ensure_stress_reward_schema(self, connection: Connection) -> None:
         metadata = MetaData()
@@ -959,6 +1088,78 @@ class ExperimentDatabase:
                         {
                             "post_id": post_id,
                             "topic_id": normalized_topic_id,
+                        },
+                    )
+                )
+            )
+
+    def _insert_hashtags_for_text(
+        self,
+        connection: Connection,
+        *,
+        text: str,
+        post_id: Any,
+    ) -> None:
+        if (
+            not text
+            or not self.has_table(connection, "hashtags")
+            or not self.has_table(connection, "post_hashtags")
+        ):
+            return
+
+        hashtags = {
+            match.group(1).strip()
+            for match in re.finditer(r"(?<!\w)#([A-Za-z0-9_]+)", str(text))
+            if match.group(1).strip()
+        }
+        if not hashtags:
+            return
+
+        hashtag_table = self.table("hashtags")
+        post_hashtags = self.table("post_hashtags")
+
+        existing_links = {
+            str(_raw_id(row[0]))
+            for row in connection.execute(
+                select(post_hashtags.c.hashtag_id).where(post_hashtags.c.post_id == post_id)
+            ).all()
+        }
+
+        existing_rows = connection.execute(
+            select(hashtag_table).where(hashtag_table.c.hashtag.in_(tuple(hashtags)))
+        ).mappings().all()
+        existing_by_tag = {
+            str(row["hashtag"]).strip().casefold(): _raw_id(row["id"])
+            for row in existing_rows
+            if row.get("id") not in (None, "") and row.get("hashtag") is not None
+        }
+
+        for tag in hashtags:
+            normalized_key = str(tag).strip().casefold()
+            hashtag_id = existing_by_tag.get(normalized_key)
+            if hashtag_id is None:
+                insert_values = self._with_generated_id(
+                    connection,
+                    "hashtags",
+                    {"hashtag": str(tag).strip()},
+                )
+                result = connection.execute(
+                    hashtag_table.insert().values(**insert_values).returning(hashtag_table.c.id)
+                )
+                hashtag_id = _raw_id(result.scalar_one())
+                existing_by_tag[normalized_key] = hashtag_id
+
+            if str(hashtag_id) in existing_links:
+                continue
+
+            connection.execute(
+                post_hashtags.insert().values(
+                    **self._with_generated_id(
+                        connection,
+                        "post_hashtags",
+                        {
+                            "post_id": post_id,
+                            "hashtag_id": hashtag_id,
                         },
                     )
                 )
@@ -1910,7 +2111,11 @@ class ExperimentDatabase:
         joined_on: Any,
         daily_budget: float | None,
     ) -> dict[str, Any]:
-        enriched = dict(values)
+        enriched = self._with_synthetic_user_profile(
+            connection,
+            values,
+            joined_on=joined_on,
+        )
         if not self.has_table(connection, "user_mgmt"):
             return enriched
         column_info = inspect(connection).get_columns("user_mgmt")
@@ -1940,6 +2145,193 @@ class ExperimentDatabase:
             else:
                 enriched[name] = ""
         return enriched
+
+    def _with_synthetic_user_profile(
+        self,
+        connection: Connection,
+        values: dict[str, Any],
+        *,
+        joined_on: Any,
+    ) -> dict[str, Any]:
+        enriched = dict(values)
+        if not self.has_table(connection, "user_mgmt"):
+            return enriched
+
+        supported = self._table_columns(connection, "user_mgmt")
+        nationality = (
+            str(enriched.get("nationality") or "").strip()
+            or self._sample_existing_choice(connection, "nationality")
+            or "American"
+        )
+        language = (
+            str(enriched.get("language") or "").strip()
+            or self._sample_existing_choice(connection, "language")
+            or "English"
+        )
+        gender = (
+            str(enriched.get("gender") or "").strip().lower()
+            or self._sample_existing_choice(connection, "gender")
+            or random.choice(("male", "female"))
+        )
+        fake = self._faker_for_profile(nationality=nationality, language=language)
+
+        if "email" in supported and not str(enriched.get("email") or "").strip() and enriched.get("username"):
+            enriched["email"] = f"{str(enriched['username']).strip()}@example.org"
+
+        scalar_defaults: dict[str, Any] = {
+            "nationality": nationality,
+            "language": language,
+            "gender": gender,
+            "leaning": self._sample_existing_choice(connection, "leaning") or random.choice(
+                ("democrat", "republican", "neutral")
+            ),
+            "education_level": self._sample_existing_choice(connection, "education_level") or "bachelor",
+            "profession": self._sample_existing_choice(connection, "profession") or self._trim_text(fake.job(), 50),
+            "recsys_type": self._sample_existing_choice(connection, "recsys_type") or "reverse_chronological",
+            "frecsys_type": self._sample_existing_choice(connection, "frecsys_type") or "reverse_chronological",
+            "activity_profile": self._sample_existing_choice(connection, "activity_profile") or "Always On",
+        }
+        if "joined_on" in supported and enriched.get("joined_on") is None:
+            scalar_defaults["joined_on"] = joined_on
+
+        for column_name, value in scalar_defaults.items():
+            if column_name in supported and not self._has_meaningful_value(enriched.get(column_name)):
+                enriched[column_name] = value
+
+        if "age" in supported and not self._has_meaningful_value(enriched.get("age")):
+            enriched["age"] = self._sample_existing_int(connection, "age") or random.randint(21, 58)
+
+        if "interests" in supported and not self._has_meaningful_value(enriched.get("interests")):
+            enriched["interests"] = self._sample_interest_string(connection)
+
+        for trait_name in ("oe", "co", "ex", "ag", "ne"):
+            if trait_name in supported and not self._has_meaningful_value(enriched.get(trait_name)):
+                enriched[trait_name] = self._sample_existing_numeric_text(connection, trait_name)
+
+        return enriched
+
+    def _sample_existing_choice(self, connection: Connection, column_name: str) -> str | None:
+        values = self._distinct_nonempty_user_values(connection, column_name)
+        if not values:
+            return None
+        return random.choice(values)
+
+    def _sample_existing_int(self, connection: Connection, column_name: str) -> int | None:
+        values = self._distinct_nonempty_user_values(connection, column_name)
+        numeric_values: list[int] = []
+        for value in values:
+            try:
+                numeric_values.append(int(float(str(value))))
+            except (TypeError, ValueError):
+                continue
+        if not numeric_values:
+            return None
+        return random.choice(numeric_values)
+
+    def _sample_existing_numeric_text(self, connection: Connection, column_name: str) -> str:
+        values = self._distinct_nonempty_user_values(connection, column_name)
+        numeric_values: list[float] = []
+        for value in values:
+            try:
+                numeric_values.append(float(str(value)))
+            except (TypeError, ValueError):
+                continue
+        if numeric_values:
+            return f"{random.choice(numeric_values):.2f}"
+        return f"{random.uniform(0.25, 0.85):.2f}"
+
+    def _sample_interest_string(self, connection: Connection) -> str:
+        interest_labels = self._available_interest_labels(connection)
+        if not interest_labels:
+            user_interest_values = self._distinct_nonempty_user_values(connection, "interests")
+            parsed_interest_labels: list[str] = []
+            for raw_value in user_interest_values:
+                parsed_interest_labels.extend(self._split_interest_values(raw_value))
+            interest_labels = [label for label in parsed_interest_labels if label]
+        if not interest_labels:
+            interest_labels = ["News", "Culture", "Technology"]
+        sample_size = min(len(interest_labels), random.randint(1, min(3, len(interest_labels))))
+        return "|".join(random.sample(interest_labels, k=sample_size))
+
+    def _available_interest_labels(self, connection: Connection) -> list[str]:
+        if not self.has_table(connection, "interests"):
+            return []
+        interests = self.table("interests")
+        interest_column = (
+            interests.c.interest
+            if "interest" in interests.c
+            else interests.c.topic
+            if "topic" in interests.c
+            else None
+        )
+        if interest_column is None:
+            return []
+        rows = connection.execute(select(interest_column)).all()
+        values = [str(row[0]).strip() for row in rows if row[0] not in (None, "")]
+        return list(dict.fromkeys(values))
+
+    def _distinct_nonempty_user_values(self, connection: Connection, column_name: str) -> list[str]:
+        if not self.has_table(connection, "user_mgmt"):
+            return []
+        user_mgmt = self.table("user_mgmt")
+        if column_name not in user_mgmt.c:
+            return []
+        rows = connection.execute(
+            select(user_mgmt.c[column_name]).where(user_mgmt.c[column_name].is_not(None))
+        ).all()
+        values: list[str] = []
+        for row in rows:
+            raw = row[0]
+            if raw is None:
+                continue
+            text_value = str(raw).strip()
+            if not text_value:
+                continue
+            values.append(text_value)
+        return list(dict.fromkeys(values))
+
+    def _faker_for_profile(self, *, nationality: str | None, language: str | None) -> Faker:
+        locale = (
+            _FAKER_NATIONALITY_LOCALES.get(str(nationality or "").strip())
+            or _FAKER_LANGUAGE_LOCALES.get(str(language or "").strip().casefold())
+            or "en_US"
+        )
+        cached = self._faker_cache.get(locale)
+        if cached is None:
+            cached = Faker(locale)
+            self._faker_cache[locale] = cached
+        return cached
+
+    @staticmethod
+    def _normalize_generated_username(raw_name: str) -> str:
+        value = str(raw_name or "").strip().lower()
+        value = re.sub(r"[^a-z0-9_]+", "_", value)
+        value = re.sub(r"_+", "_", value).strip("_")
+        return value or f"user_{uuid.uuid4().hex[:8]}"
+
+    @staticmethod
+    def _split_interest_values(raw_value: Any) -> list[str]:
+        text_value = str(raw_value or "").strip()
+        if not text_value:
+            return []
+        return [
+            segment.strip()
+            for segment in re.split(r"[|,;/]+", text_value)
+            if segment and segment.strip()
+        ]
+
+    @staticmethod
+    def _trim_text(text_value: Any, max_len: int) -> str:
+        value = str(text_value or "").strip()
+        return value[:max_len].strip() if value else ""
+
+    @staticmethod
+    def _has_meaningful_value(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return bool(value.strip())
+        return True
 
     def _with_generated_id(
         self,

@@ -61,6 +61,15 @@ def _build_db(path: Path) -> sqlite3.Connection:
             post_id INTEGER NOT NULL,
             topic_id INTEGER NOT NULL
         );
+        CREATE TABLE hashtags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hashtag TEXT NOT NULL
+        );
+        CREATE TABLE post_hashtags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL,
+            hashtag_id INTEGER NOT NULL
+        );
         CREATE TABLE mentions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
@@ -192,6 +201,15 @@ def _build_uuid_hpc_db(path: Path) -> sqlite3.Connection:
             id VARCHAR(36) PRIMARY KEY NOT NULL,
             post_id VARCHAR(36),
             topic_id VARCHAR(36)
+        );
+        CREATE TABLE hashtags (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            hashtag TEXT NOT NULL
+        );
+        CREATE TABLE post_hashtags (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            post_id VARCHAR(36),
+            hashtag_id VARCHAR(36)
         );
         CREATE TABLE mentions (
             id VARCHAR(36) PRIMARY KEY NOT NULL,
@@ -418,7 +436,7 @@ def test_executor_extracts_mentions_for_plugin_posts_and_comments(tmp_path: Path
         action=AgentAction(
             agent_type="propaganda",
             action_type="CREATE_POST",
-            payload={"text": "@target_1 Please reconsider this issue."},
+            payload={"text": "@target_1 Please reconsider this issue. #HelloWorld"},
         ),
     )
     created_post_id = sa_connection.execute(text("select max(id) from post")).scalar_one()
@@ -439,7 +457,7 @@ def test_executor_extracts_mentions_for_plugin_posts_and_comments(tmp_path: Path
             agent_type="propaganda",
             action_type="CREATE_COMMENT",
             payload={
-                "text": "@target_1 Here is a follow-up thought.",
+                "text": "@target_1 Here is a follow-up thought. #ReplyTag",
                 "parent_post_id": int(created_post_id),
             },
         ),
@@ -449,6 +467,61 @@ def test_executor_extracts_mentions_for_plugin_posts_and_comments(tmp_path: Path
         {"post_id": int(created_post_id)},
     ).scalar_one()
     assert comment_mentions == 1
+    created_comment_id = sa_connection.execute(text("select max(id) from post")).scalar_one()
+    hashtags = sa_connection.execute(
+        text(
+            "select h.hashtag, ph.post_id from hashtags h join post_hashtags ph on ph.hashtag_id = h.id order by ph.post_id, h.hashtag"
+        )
+    ).fetchall()
+    assert hashtags == [("HelloWorld", created_post_id), ("ReplyTag", created_comment_id)]
+    sa_connection.close()
+    connection.close()
+
+
+def test_executor_skips_duplicate_comment_on_same_parent_for_same_actor(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment')"
+    )
+    connection.execute(
+        "INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment) "
+        "VALUES (1, 'Target post', 2, -1, 1, 1, -1, 0, 0)"
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    executor = ActionExecutor(database)
+    sa_connection = database.connect()
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=10),
+        managed_agents=(),
+    )
+    agent = AgentSpec(
+        name="Stress One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="stress_attacker",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    action = AgentAction(
+        agent_type="stress_attacker",
+        action_type="CREATE_COMMENT",
+        payload={"text": "@target_1 first reply", "parent_post_id": 1},
+    )
+
+    executor.execute(sa_connection, context=context, agent=agent, action=action)
+    executor.execute(sa_connection, context=context, agent=agent, action=action)
+
+    assert sa_connection.execute(
+        text("select count(*) from post where comment_to = 1 and user_id = 1")
+    ).scalar_one() == 1
     sa_connection.close()
     connection.close()
 
@@ -1149,6 +1222,64 @@ def test_stress_attacker_can_generate_llm_critical_comment(tmp_path: Path) -> No
     assert actions[1].payload["text"] == "@target_1 I don't see evidence for that conclusion."
     assert actions[1].payload["topic_ids"] == [1]
     assert actions[1].payload["stress_reward"]["tone"] == "critical"
+    sa_connection.close()
+    connection.close()
+
+
+def test_stress_attacker_does_not_target_other_adhoc_agents(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.executescript(
+        """
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner, age, leaning, interests)
+        VALUES
+            (2, 'comic_1', 'comic_1@example.org', 'secret', 'comic_relief', 'experiment', 30, 'democrat', 'climate'),
+            (3, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 31, 'democrat', 'climate');
+        INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment)
+        VALUES
+            (1, 'Plugin authored post', 2, -1, NULL, 1, -1, 0, 0),
+            (2, 'Human authored post', 3, -1, NULL, 1, -1, 0, 0);
+        INSERT INTO post_topics (post_id, topic_id) VALUES (2, 1);
+        """
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    attacker = StressAttackerAgent(
+        settings={
+            "target_leaning": "democrat",
+            "negative_reactions_enabled": "disabled",
+            "critical_comment_enabled": "enabled",
+            "critical_comment_mode": "synthetic",
+            "report_burst_enabled": "disabled",
+        }
+    )
+    attacker.setup_database(database, sa_connection)
+    agent = AgentSpec(
+        name="Stress One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="stress_attacker",
+        activity_profile="Always On",
+        daily_budget=12,
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=10),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+
+    actions = attacker.on_tick(context, agent)
+
+    assert [action.action_type for action in actions] == ["READ", "CREATE_COMMENT"]
+    assert actions[1].payload["parent_post_id"] == 2
+    assert "@target_1" in actions[1].payload["text"]
     sa_connection.close()
     connection.close()
 
@@ -1967,6 +2098,62 @@ def test_comic_relief_agent_generates_tagged_comment_with_reply_override(tmp_pat
     connection.close()
 
 
+def test_comic_relief_ignores_plugin_targets_and_duplicate_parent_comments(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.executescript(
+        """
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age, leaning)
+        VALUES
+            (2, 'comic_target', 'comic_target@example.org', 'secret', 'comic_relief', 'experiment', 'gaming', 28, 'neutral'),
+            (3, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 'gaming', 28, 'neutral'),
+            (4, 'comic_1', 'comic_1@example.org', 'secret', 'comic_relief', 'experiment', 'gaming', 28, 'neutral');
+        INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment)
+        VALUES
+            (1, 'Plugin joke bait', 2, -1, NULL, 2, -1, 0, 0),
+            (2, 'Human dragon build', 3, -1, NULL, 2, -1, 0, 0),
+            (3, '@target_1 existing reply', 4, 2, 2, 2, -1, 0, 0);
+        """
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    comic = ComicReliefAgent(
+        settings={
+            "humor_styles": ["fantasy_gaming"],
+            "delivery_mode": "comment_only",
+            "post_lookback_rounds": 24,
+        },
+        llm_client=_FakeLLM(),
+    )
+    comic.setup_database(database, sa_connection)
+    agent = AgentSpec(
+        name="Comic One",
+        username="comic_1",
+        email="comic_1@example.org",
+        password="secret",
+        agent_type="comic_relief",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="comic-client",
+        current_round=SimulationRound(id=2, day=0, slot=1),
+        previous_round=SimulationRound(id=1, day=0, slot=0),
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=2, limit=10),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+
+    actions = comic.on_tick(context, agent)
+
+    assert [action.action_type for action in actions] == ["READ"]
+    sa_connection.close()
+    connection.close()
+
+
 def test_propaganda_agent_can_open_multiple_filtered_targets_up_to_capacity(tmp_path: Path) -> None:
     db_path = tmp_path / "simulation.db"
     connection = _build_db(db_path)
@@ -2070,6 +2257,75 @@ def test_propaganda_agent_can_open_multiple_filtered_targets_up_to_capacity(tmp_
         text("SELECT post_id, topic_id FROM post_topics ORDER BY post_id, topic_id")
     ).fetchall()
     assert inserted_topics == [(1, 1), (2, 1)]
+    sa_connection.close()
+    connection.close()
+
+
+def test_propaganda_does_not_target_other_adhoc_agents(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.executescript(
+        """
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age, leaning)
+        VALUES
+            (2, 'comic_target', 'comic_target@example.org', 'secret', 'comic_relief', 'experiment', 'climate', 24, 'Left'),
+            (3, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 'climate', 24, 'Left');
+        INSERT INTO agent_opinion (agent_id, tid, topic_id, id_interacted_with, id_post, opinion)
+        VALUES
+            (2, 1, 1, 2, 0, 0.10),
+            (3, 1, 1, 3, 0, 0.12);
+        """
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    propaganda = PropagandaAgent(
+        settings={
+            "propaganda_campaigns": [
+                {
+                    "topic_id": 1,
+                    "topic_name": "Climate",
+                    "target_opinion": 0.8,
+                    "target_agent_opinion_group": "Opposed",
+                    "target_agent_opinion_group_bounds": {
+                        "name": "Opposed",
+                        "lower_bound": 0.0,
+                        "upper_bound": 0.2,
+                        "value": 0.1,
+                    },
+                    "target_leaning": "Left",
+                    "target_age_classes": [{"name": "Young", "age_start": 18, "age_end": 30}],
+                }
+            ]
+        },
+        llm_client=_FakeLLM(),
+    )
+    propaganda.setup_database(database, sa_connection)
+    agent = AgentSpec(
+        name="Propaganda One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="propaganda",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=10),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+
+    actions = propaganda.on_tick(context, agent)
+
+    assert [action.action_type for action in actions] == ["READ", "CREATE_POST"]
+    assert "@target_1" in actions[1].payload["text"]
+    assert "@comic_target" not in actions[1].payload["text"]
     sa_connection.close()
     connection.close()
 
@@ -2872,6 +3128,14 @@ def test_mop_spawns_puppets_and_generates_due_actions(tmp_path: Path) -> None:
     assert sa_connection.execute(
         text("select count(*) from puppet_registry where parent_mop_id = 1 and is_banned = 0")
     ).scalar_one() == 2
+    puppet_usernames = [
+        row[0]
+        for row in sa_connection.execute(
+            text("select username from puppet_registry where parent_mop_id = 1 order by username asc")
+        ).fetchall()
+    ]
+    assert all("_puppet_" not in username for username in puppet_usernames)
+    assert all("_" in username for username in puppet_usernames)
     assert sa_connection.execute(
         text("select count(*) from daily_schedules")
     ).scalar_one() >= 2
@@ -2880,6 +3144,75 @@ def test_mop_spawns_puppets_and_generates_due_actions(tmp_path: Path) -> None:
     ).scalar_one() == 2
     assert any(action.action_type == "CREATE_POST" for action in actions)
     assert any(action.action_type == "FOLLOW_USER" for action in actions)
+    sa_connection.close()
+    connection.close()
+
+
+def test_mop_strips_echoed_puppet_metadata_from_llm_output(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age, leaning) VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 'Climate', 30, 'Center')"
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+
+    class StubLLM:
+        is_available = True
+
+        def invoke_text(self, *, system_prompt: str, user_prompt: str) -> str:
+            return (
+                '"@target_1 Publications are the ultimate test of intellectual courage! '
+                'Sharing your ideas with the world takes guts. '
+                '#PublishOrPerish #AcademicHonor #IntellectualFreedom" '
+                "(Puppet ID: 446fb614-c1b8-420c-ba1d-ea151a74c925) — posted at 14:04:21"
+            )
+
+    mop = MasterOfPuppetsAgent(
+        settings={
+            "puppet_count": 1,
+            "post_budget_percentage": 100,
+            "support_budget_percentage": 0,
+            "network_budget_percentage": 0,
+            "mop_campaigns": [
+                {
+                    "topic_id": 1,
+                    "topic_name": "Climate",
+                    "target_opinion": 0.8,
+                    "target_opinion_group": "Supportive",
+                }
+            ],
+        },
+        llm_client=StubLLM(),
+    )
+    mop.setup_database(database, sa_connection)
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=24, day=0, slot=23),
+        previous_round=SimulationRound(id=23, day=0, slot=22),
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=1, limit=20),
+        managed_agents=(),
+        connection=sa_connection,
+    )
+    agent = AgentSpec(
+        name="MoP One",
+        username="hello_1",
+        email="hello_1@example.org",
+        password="secret",
+        agent_type="master_of_puppets",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+
+    actions = mop.on_tick(context, agent)
+    create_post = next(action for action in actions if action.action_type == "CREATE_POST")
+
+    assert "Puppet ID" not in create_post.payload["text"]
+    assert "posted at" not in create_post.payload["text"]
+    assert create_post.payload["text"].startswith("@target_1 ")
     sa_connection.close()
     connection.close()
 

@@ -212,6 +212,7 @@ class ModeratorAgent(BaseAgentPlugin):
             ),
         )
 
+
     def _build_moderation_payload(
         self,
         *,

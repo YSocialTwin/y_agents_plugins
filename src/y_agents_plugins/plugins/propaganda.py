@@ -223,6 +223,12 @@ class PropagandaAgent(BaseAgentPlugin):
         )
         if latest_target_reply is None:
             return None
+        if self.database.user_has_commented_on_parent_post(
+            context.connection,
+            username=agent.username,
+            parent_post_id=latest_target_reply.id,
+        ):
+            return None
         thread_posts = self.database.get_thread_posts(
             context.connection,
             thread_id=active_thread["thread_id"],
@@ -302,7 +308,6 @@ class PropagandaAgent(BaseAgentPlugin):
         campaigns: list[dict[str, Any]],
         excluded_target_ids: set[str],
     ) -> dict[str, Any] | None:
-        managed_usernames = {managed_agent.username for managed_agent in context.managed_agents}
         candidates: list[dict[str, Any]] = []
         for campaign in campaigns:
             latest = self.database.get_latest_opinions_for_topic(
@@ -319,7 +324,7 @@ class PropagandaAgent(BaseAgentPlugin):
                 user = self._safe_user_by_id(user_id, users=context.users)
                 if user is None:
                     continue
-                if user.username in managed_usernames:
+                if self._is_plugin_user(user):
                     continue
                 if self.database.user_is_banned(context.connection, user_id=user_id):
                     continue

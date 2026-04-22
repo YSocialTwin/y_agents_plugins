@@ -68,6 +68,12 @@ class StressAttackerAgent(BaseAgentPlugin):
             lookback_rounds=max(1, int(settings.get("post_lookback_rounds", 24) or 24)),
         )
         target_post = recent_posts[0] if recent_posts else None
+        comment_candidate_posts = self._candidate_posts_for_target(
+            context=context,
+            target_user_id=target_user.id,
+            lookback_rounds=max(1, int(settings.get("post_lookback_rounds", 24) or 24)),
+            exclude_already_commented_by=agent.username,
+        )
 
         if self._enabled(settings, "negative_reactions_enabled") and target_post is not None:
             actions.append(
@@ -91,7 +97,7 @@ class StressAttackerAgent(BaseAgentPlugin):
             remaining_budget -= 1
 
         if remaining_budget > 0 and self._enabled(settings, "critical_comment_enabled"):
-            surfaced_post = recent_posts[-1] if recent_posts else None
+            surfaced_post = comment_candidate_posts[-1] if comment_candidate_posts else None
             critical_comment_mode = str(
                 settings.get("critical_comment_mode") or "synthetic"
             ).strip().lower()
@@ -233,7 +239,7 @@ class StressAttackerAgent(BaseAgentPlugin):
             if str(user.id) == str(attacker_uid):
                 continue
             user_type = str(user.user_type or "").strip().lower()
-            if user_type in {"stress_attacker", "hello_world", "moderator", "propaganda", "master_of_puppets", "mop_puppet"}:
+            if self._is_plugin_user(user):
                 continue
             if self.database.user_is_banned(context.connection, user_id=user.id):
                 continue
@@ -356,6 +362,7 @@ class StressAttackerAgent(BaseAgentPlugin):
         context: AgentContext,
         target_user_id: Any,
         lookback_rounds: int,
+        exclude_already_commented_by: str | None = None,
     ) -> tuple[PostRecord, ...]:
         min_round_id = max(0, context.current_round.ordinal - max(0, int(lookback_rounds)))
         posts = self.database.get_posts_by_author_ids_since_round(
@@ -364,9 +371,21 @@ class StressAttackerAgent(BaseAgentPlugin):
             min_round_id=min_round_id,
             limit=100,
         )
-        filtered = [
-            post for post in posts if not int(post.is_moderation_comment or 0)
-        ]
+        filtered = []
+        for post in posts:
+            if int(post.is_moderation_comment or 0):
+                continue
+            if (
+                exclude_already_commented_by
+                and context.connection is not None
+                and self.database.user_has_commented_on_parent_post(
+                    context.connection,
+                    username=exclude_already_commented_by,
+                    parent_post_id=post.id,
+                )
+            ):
+                continue
+            filtered.append(post)
         filtered.sort(key=lambda post: (post.round_ordinal, str(post.id)), reverse=True)
         return tuple(filtered)
 

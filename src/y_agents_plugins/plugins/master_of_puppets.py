@@ -181,7 +181,10 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             known_usernames.add(username)
 
         while len(active_ids) < target_count:
-            username = self._next_puppet_username(agent.username, existing_usernames=known_usernames)
+            username = self.database.generate_realistic_username(
+                context.connection,
+                existing_usernames=known_usernames,
+            )
             puppet_id = self.database.create_plugin_user(
                 context.connection,
                 username=username,
@@ -581,6 +584,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             for user in context.users
             if str(user.id) not in forbidden
             and all(str(user.id) != str(followed_id) for followed_id in followed)
+            and not self._is_plugin_user(user)
             and not self.database.user_is_banned(context.connection, user_id=user.id)
         ]
         if not candidates:
@@ -626,7 +630,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             user
             for user in users
             if str(user.id) not in forbidden
-            and str(user.user_type or "").strip().lower() not in {"mop_puppet", self.agent_type}
+            and not self._is_plugin_user(user)
             and not self.database.user_is_banned(context.connection, user_id=user.id)
         ]
         if not candidates:
@@ -682,8 +686,39 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         return self._normalize_mention(text, target_user.username if target_user else None)
 
     @staticmethod
-    def _normalize_mention(text: str, username: str | None) -> str:
+    def _sanitize_generated_social_text(text: str) -> str:
         cleaned = str(text or "").strip()
+        cleaned = re.sub(
+            r'^\s*(?:here(?:’|\'|)s|here is)\s+(?:a\s+)?(?:potential\s+)?(?:social-media\s+)?(?:post|reply)\s*:\s*',
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        ).strip()
+        cleaned = re.sub(
+            r'\s*\(\s*puppet\s*id\s*:\s*[^)]+\)\s*(?:[—–-]\s*posted\s+at\s+\d{1,2}:\d{2}(?::\d{2})?)?\s*$',
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        ).strip()
+        cleaned = re.sub(
+            r'\s*(?:[—–-]\s*)?posted\s+at\s+\d{1,2}:\d{2}(?::\d{2})?\s*$',
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        ).strip()
+        cleaned = re.sub(
+            r'^\s*puppet\s*id\s*:\s*[^\n]+$',
+            "",
+            cleaned,
+            flags=re.IGNORECASE | re.MULTILINE,
+        ).strip()
+        if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {'"', "'"}:
+            cleaned = cleaned[1:-1].strip()
+        return cleaned
+
+    @staticmethod
+    def _normalize_mention(text: str, username: str | None) -> str:
+        cleaned = MasterOfPuppetsAgent._sanitize_generated_social_text(text)
         if not username:
             return cleaned
         if not re.search(rf"@{re.escape(username)}\b", cleaned, flags=re.IGNORECASE):
@@ -889,18 +924,6 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             if campaign["topic_name"].lower() in str(post.text or "").lower():
                 return campaign
         return campaigns[0]
-
-    def _next_puppet_username(
-        self,
-        mop_username: str,
-        *,
-        existing_usernames: set[str],
-    ) -> str:
-        base = f"{mop_username}_puppet"
-        index = 1
-        while f"{base}_{index}" in existing_usernames:
-            index += 1
-        return f"{base}_{index}"
 
     def _resolved_settings(self, agent: AgentSpec | None = None) -> dict[str, Any]:
         settings = dict(self.settings)

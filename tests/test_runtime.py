@@ -71,6 +71,7 @@ def _build_db(path: Path) -> None:
             leaning TEXT,
             interests TEXT,
             age INTEGER,
+            gender TEXT,
             oe TEXT,
             co TEXT,
             ex TEXT,
@@ -80,6 +81,8 @@ def _build_db(path: Path) -> None:
             language TEXT,
             owner TEXT,
             education_level TEXT,
+            nationality TEXT,
+            profession TEXT,
             joined_on INTEGER,
             frecsys_type TEXT
         );
@@ -115,8 +118,8 @@ def _build_db(path: Path) -> None:
             duration INTEGER
         );
         INSERT INTO rounds (day, hour) VALUES (0, 0);
-        INSERT INTO user_mgmt (id, username, email, password, user_type, owner, joined_on)
-        VALUES (1, 'alice', 'alice@example.org', 'secret', 'human', 'experiment', 1);
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner, joined_on, leaning, interests, age, gender, language, education_level, nationality, profession, recsys_type, frecsys_type)
+        VALUES (1, 'alice', 'alice@example.org', 'secret', 'human', 'experiment', 1, 'democrat', 'Climate|Technology', 31, 'female', 'English', 'bachelor', 'American', 'Teacher', 'reverse_chronological', 'reverse_chronological');
         INSERT INTO post (id, tweet, user_id, round) VALUES (1, 'hello world', 1, 1);
         """
     )
@@ -230,11 +233,19 @@ def test_client_registers_agents_in_user_mgmt(tmp_path: Path) -> None:
 
     connection = sqlite3.connect(db_path)
     row = connection.execute(
-        "SELECT username, email, user_type FROM user_mgmt WHERE username = 'mod_1'"
+        "SELECT username, email, user_type, leaning, interests, age, language, education_level, nationality, profession FROM user_mgmt WHERE username = 'mod_1'"
     ).fetchone()
     connection.close()
 
-    assert row == ("mod_1", "mod_1@example.org", "moderator")
+    assert row[0:3] == ("mod_1", "mod_1@example.org", "moderator")
+    assert row[3] in {"democrat", "republican", "neutral"}
+    assert row[4]
+    assert isinstance(row[5], int)
+    assert row[5] >= 18
+    assert row[6]
+    assert row[7]
+    assert row[8]
+    assert row[9]
 
 
 def test_client_registers_agents_with_required_hpc_user_defaults(tmp_path: Path) -> None:
