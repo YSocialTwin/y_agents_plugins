@@ -1221,7 +1221,7 @@ def test_stress_attacker_can_generate_llm_critical_comment(tmp_path: Path) -> No
     assert actions[1].payload["text"].startswith("@target_1 ")
     assert actions[1].payload["text"] == "@target_1 I don't see evidence for that conclusion."
     assert actions[1].payload["topic_ids"] == [1]
-    assert actions[1].payload["stress_reward"]["tone"] == "critical"
+    assert actions[1].payload["stress_reward"]["tone"] == "hostile"
     sa_connection.close()
     connection.close()
 
@@ -1391,8 +1391,8 @@ def test_executor_persists_llm_generated_stress_attacker_comment(tmp_path: Path)
             "thread_id": 1,
             "text": "@target_1 I don't think your argument is supported here.",
             "stress_reward": {
-                "tone": "critical",
-                "action": "comment:critical",
+                "tone": "hostile",
+                "action": "comment:hostile",
                 "public_exposure": 1.0,
             },
         },
@@ -1408,7 +1408,7 @@ def test_executor_persists_llm_generated_stress_attacker_comment(tmp_path: Path)
     ).fetchall()
 
     assert comment == ("@target_1 I don't think your argument is supported here.", 1, 1)
-    assert ("stress", "variation", "comment:critical") in stress_rows
+    assert ("stress", "variation", "comment:hostile") in stress_rows
     sa_connection.close()
     connection.close()
 
@@ -1464,8 +1464,8 @@ def test_executor_infers_comment_exposure_from_thread_size(tmp_path: Path) -> No
             "thread_id": 1,
             "text": "@target_1 Please clarify the weakest part of this argument.",
             "stress_reward": {
-                "tone": "critical",
-                "action": "comment:critical",
+                "tone": "hostile",
+                "action": "comment:hostile",
             },
         },
     )
@@ -1474,11 +1474,11 @@ def test_executor_infers_comment_exposure_from_thread_size(tmp_path: Path) -> No
 
     stress_value = sa_connection.execute(
         text(
-            "SELECT value FROM stress_reward WHERE variable='stress' AND type='variation' AND action='comment:critical'"
+            "SELECT value FROM stress_reward WHERE variable='stress' AND type='variation' AND action='comment:hostile'"
         )
     ).scalar_one()
 
-    assert stress_value > 0.03
+    assert stress_value > 0.10
     sa_connection.close()
     connection.close()
 

@@ -127,8 +127,8 @@ class StressAttackerAgent(BaseAgentPlugin):
                                 )
                             ),
                             "stress_reward": {
-                                "tone": "critical",
-                                "action": "comment:critical",
+                                "tone": "hostile",
+                                "action": "comment:hostile",
                             },
                         },
                     )
@@ -141,8 +141,8 @@ class StressAttackerAgent(BaseAgentPlugin):
                         payload={
                             "target_user_id": target_user.id,
                             "family": "comment",
-                            "subtype": "critical",
-                            "action_name": "synthetic_comment:critical",
+                            "subtype": "hostile",
+                            "action_name": "synthetic_comment:hostile",
                             "source_count": source_count,
                             "source_post_id": (surfaced_post.id if surfaced_post is not None else None),
                         },
