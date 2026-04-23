@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import re
 from typing import Any
 
@@ -51,24 +52,27 @@ class ComicReliefAgent(BaseAgentPlugin):
                     },
                 ),
             ]
+        topic_context = self._select_simulation_topic(context)
         return [
             self._read_action(context, agent),
             AgentAction(
                 agent_type=self.agent_type,
                 action_type="CREATE_POST",
                 payload={
+                    "topic_ids": [topic_context["topic_id"]] if topic_context is not None else [],
                     "text": self._build_post_text(
                         agent=agent,
                         target_user=target_user,
                         target_post=target_post,
+                        topic_context=topic_context,
                     ),
-                        "stress_reward": {
-                            "tone": "supportive",
-                            "action": "post:supportive",
-                            "target_user_id": target_user.id,
-                        },
+                    "stress_reward": {
+                        "tone": "supportive",
+                        "action": "post:supportive",
+                        "target_user_id": target_user.id,
                     },
-                ),
+                },
+            ),
         ]
 
     def _select_target_post(
@@ -116,6 +120,7 @@ class ComicReliefAgent(BaseAgentPlugin):
         agent: AgentSpec,
         target_user: UserRecord,
         target_post: PostRecord,
+        topic_context: dict[str, Any] | None,
     ) -> str:
         if self.llm is None or not getattr(self.llm, "is_available", False):
             return self._normalize_target_tag(
@@ -129,9 +134,10 @@ class ComicReliefAgent(BaseAgentPlugin):
         user_prompt = (
             f"Comic relief styles: {', '.join(self._humor_styles(agent))}\n"
             f"Target user profile: {target_user.profile}\n"
+            f"Selected simulation topic: {topic_context['topic_name'] if topic_context else 'unknown'}\n"
             f"Original post: {target_post.text}\n"
             f"Write one short humorous post that starts with '@{target_user.username} '. "
-            "Make it clearly related to the original post, playful, and safe for a public feed. "
+            "Make it clearly related to the original post and the selected simulation topic, playful, and safe for a public feed. "
             "Return only the post text."
         )
         text = self.llm.invoke_text(system_prompt=system_prompt, user_prompt=user_prompt).strip()
@@ -192,6 +198,14 @@ class ComicReliefAgent(BaseAgentPlugin):
             cleaned = [str(item).strip() for item in value if str(item).strip()]
             return cleaned or list(self._DEFAULT_STYLES)
         return list(self._DEFAULT_STYLES)
+
+    def _select_simulation_topic(self, context: AgentContext) -> dict[str, Any] | None:
+        if context.connection is None:
+            return None
+        topics = list(self.database.get_available_topics(context.connection))
+        if not topics:
+            return None
+        return random.choice(topics)
 
     def _resolved_settings(self, agent: AgentSpec | None = None) -> dict[str, Any]:
         settings = dict(self.settings)

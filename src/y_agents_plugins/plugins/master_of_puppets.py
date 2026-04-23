@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import random
 import re
@@ -296,6 +297,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
             payload = self._build_schedule_payload(
                 context=context,
                 agent=agent,
+                puppet_ids=puppet_ids,
                 puppet_id=puppet_id,
                 action_type=action_type,
                 campaigns=campaigns,
@@ -327,6 +329,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         *,
         context: AgentContext,
         agent: AgentSpec,
+        puppet_ids: list[Any],
         puppet_id: Any,
         action_type: str,
         campaigns: list[dict[str, Any]],
@@ -338,6 +341,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         if action_type == "post":
             target_user = self._select_post_target_user(
                 context=context,
+                puppet_ids=puppet_ids,
                 puppet_id=puppet_id,
                 campaign=campaign,
                 planner_rng=planner_rng,
@@ -620,6 +624,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         self,
         *,
         context: AgentContext,
+        puppet_ids: list[Any],
         puppet_id: Any,
         campaign: dict[str, Any],
         planner_rng: random.Random,
@@ -635,6 +640,12 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
         ]
         if not candidates:
             return None
+        recent_target_stats = self._recent_campaign_target_stats(
+            context=context,
+            puppet_ids=puppet_ids,
+            topic_id=campaign["runtime_topic_id"],
+            lookback_days=14,
+        )
         if campaign.get("target_opinion") is not None and self.database.has_table(context.connection, "agent_opinion"):
             opinion_candidates = []
             for user in candidates:
@@ -647,11 +658,70 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                 if current is None:
                     continue
                 distance = abs(float(current) - float(campaign["target_opinion"]))
-                opinion_candidates.append((distance, user))
+                target_count, last_round = recent_target_stats.get(str(user.id), (0, -1))
+                opinion_candidates.append((target_count, last_round, -distance, planner_rng.random(), user))
             if opinion_candidates:
-                opinion_candidates.sort(key=lambda item: item[0], reverse=True)
-                return opinion_candidates[0][1]
-        return planner_rng.choice(candidates)
+                opinion_candidates.sort()
+                return opinion_candidates[0][-1]
+        ranked_candidates = []
+        for user in candidates:
+            target_count, last_round = recent_target_stats.get(str(user.id), (0, -1))
+            ranked_candidates.append((target_count, last_round, planner_rng.random(), user))
+        ranked_candidates.sort()
+        return ranked_candidates[0][-1]
+
+    def _recent_campaign_target_stats(
+        self,
+        *,
+        context: AgentContext,
+        puppet_ids: list[Any],
+        topic_id: Any,
+        lookback_days: int,
+    ) -> dict[str, tuple[int, int]]:
+        if not puppet_ids or not self.database.has_table(context.connection, "activity_logs"):
+            return {}
+        logs = self.database.table("activity_logs")
+        min_round = int(context.current_round.ordinal) - max(1, int(lookback_days)) * 24
+        rows = context.connection.execute(
+            select(logs.c.round_id, logs.c.details)
+            .where(logs.c.p_id.in_(list(puppet_ids)))
+            .where(logs.c.action_type == "post")
+            .where(logs.c.status == "executed")
+            .where(logs.c.round_id >= min_round)
+            .order_by(logs.c.round_id.desc())
+        ).all()
+        stats: dict[str, tuple[int, int]] = {}
+        for round_id, details_raw in rows:
+            details = self._parse_activity_details(details_raw)
+            if str(details.get("campaign_topic_id")) != str(topic_id):
+                continue
+            target_user_id = details.get("target_user_id")
+            if target_user_id in (None, ""):
+                continue
+            key = str(target_user_id)
+            current_count, current_last_round = stats.get(key, (0, -1))
+            stats[key] = (current_count + 1, max(current_last_round, int(round_id)))
+        return stats
+
+    @staticmethod
+    def _parse_activity_details(details_raw: Any) -> dict[str, Any]:
+        if isinstance(details_raw, dict):
+            return details_raw
+        if details_raw in (None, ""):
+            return {}
+        text = str(details_raw).strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            pass
+        try:
+            parsed = ast.literal_eval(text)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
 
     def _build_post_text(
         self,

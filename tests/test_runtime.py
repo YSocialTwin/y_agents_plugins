@@ -534,6 +534,52 @@ def test_client_app_accepts_moderator_settings_from_agent_parameters(
     ]
 
 
+def test_client_app_accepts_locale_decimal_moderator_threshold(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation_locale.db"
+    agents_path = tmp_path / "agents_locale.json"
+    _build_db(db_path)
+    _build_agents_json(
+        agents_path,
+        parameters={
+            "toxicity_threshold": "0,6",
+            "moderation_time_span": "4",
+            "moderation_action_type": "one-fits-all",
+            "candidate_window_rounds": "3",
+        },
+    )
+    config = AppConfig(
+        database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+        client=ClientConfig(
+            client_id="moderator-client",
+            agent_type="moderator",
+            agents_json_path=agents_path,
+            llm_servers=LLMServerConfig(values=_llm_servers()),
+            simulation=SimulationConfig(
+                days=30,
+                slots=24,
+                population_json_path=agents_path,
+                raw=_simulation(tmp_path, agents_path),
+            ),
+            agent_settings={},
+            max_ticks=1,
+        ),
+    )
+
+    app = ClientApp(config)
+    app.run()
+
+    connection = sqlite3.connect(db_path)
+    row = connection.execute(
+        "SELECT strategy_key FROM plugin_moderation_strategies ORDER BY strategy_key"
+    ).fetchall()
+    connection.close()
+
+    assert row == [
+        ("one-fits-all",),
+        ("personalized",),
+    ]
+
+
 def test_second_moderator_client_reuses_existing_plugin_tables(tmp_path: Path) -> None:
     db_path = tmp_path / "simulation.db"
     agents_a = tmp_path / "agents_a.json"
@@ -834,3 +880,52 @@ def test_personalized_moderator_requires_llm_model(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="requires a configured LangChain LLM model"):
         ClientApp(config).run()
+
+
+def test_personalized_moderator_agent_override_falls_back_to_shared_standard_mode(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "simulation_override.db"
+    agents_path = tmp_path / "agents_override.json"
+    _build_db(db_path)
+    _build_agents_json(
+        agents_path,
+        parameters={
+            "toxicity_threshold": "0.6",
+            "moderation_time_span": "4",
+            "moderation_action_type": "personalized",
+            "candidate_window_rounds": "3",
+        },
+    )
+
+    config = AppConfig(
+        database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+        client=ClientConfig(
+            client_id="moderator-client",
+            agent_type="moderator",
+            agents_json_path=agents_path,
+            llm_servers=LLMServerConfig(values=_llm_servers()),
+            simulation=SimulationConfig(
+                days=30,
+                slots=24,
+                population_json_path=agents_path,
+                raw=_simulation(tmp_path, agents_path),
+            ),
+            agent_settings=_moderator_settings(moderation_action_type="one-fits-all"),
+            max_ticks=1,
+        ),
+    )
+
+    app = ClientApp(config)
+    app.run()
+
+    connection = sqlite3.connect(db_path)
+    strategies = connection.execute(
+        "SELECT strategy_key FROM plugin_moderation_strategies ORDER BY strategy_key"
+    ).fetchall()
+    connection.close()
+
+    assert strategies == [
+        ("one-fits-all",),
+        ("personalized",),
+    ]

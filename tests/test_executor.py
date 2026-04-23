@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import random
 import sqlite3
 from pathlib import Path
+from unittest.mock import patch
 
 from sqlalchemy import text
 
@@ -1975,9 +1977,14 @@ def test_propaganda_agent_replies_and_tracks_updated_opinion(tmp_path: Path) -> 
 def test_comic_relief_agent_generates_tagged_post_with_opening_override(tmp_path: Path) -> None:
     db_path = tmp_path / "simulation.db"
     connection = _build_db(db_path)
+    connection.execute("INSERT INTO interests (iid, topic) VALUES (99, 'Energy')")
     connection.execute(
         "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age, leaning) "
         "VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 'science,climate', 30, 'democrat')"
+    )
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age, leaning) "
+        "VALUES (3, 'comic_1', 'comic_1@example.org', 'secret', 'comic_relief', 'experiment', 'humor,science', 31, 'neutral')"
     )
     connection.execute(
         "INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment) "
@@ -1992,6 +1999,7 @@ def test_comic_relief_agent_generates_tagged_post_with_opening_override(tmp_path
             assert system_prompt == "OPENING COMIC OVERRIDE"
             assert "dad_jokes" in user_prompt
             assert "science_geek" in user_prompt
+            assert "Selected simulation topic: Energy" in user_prompt
             assert "renewable energy policy" in user_prompt
             return "@target_1 That policy thread has the energy of a solar panel trying stand-up."
 
@@ -2026,11 +2034,23 @@ def test_comic_relief_agent_generates_tagged_post_with_opening_override(tmp_path
         connection=sa_connection,
     )
 
-    actions = comic.on_tick(context, agent)
+    with patch(
+        "y_agents_plugins.plugins.comic_relief.random.choice",
+        return_value={"topic_id": 99, "topic_name": "Energy"},
+    ):
+        actions = comic.on_tick(context, agent)
 
     assert [action.action_type for action in actions] == ["READ", "CREATE_POST"]
     assert actions[1].payload["text"].startswith("@target_1 ")
+    assert actions[1].payload["topic_ids"] == [99]
     assert actions[1].payload["stress_reward"]["action"] == "post:supportive"
+
+    executor = ActionExecutor(database)
+    executor.execute(sa_connection, context=context, agent=agent, action=actions[1])
+    inserted_topic = sa_connection.execute(
+        text("SELECT topic_id FROM post_topics ORDER BY post_id DESC LIMIT 1")
+    ).fetchone()
+    assert inserted_topic == (99,)
     sa_connection.close()
     connection.close()
 
@@ -3144,6 +3164,84 @@ def test_mop_spawns_puppets_and_generates_due_actions(tmp_path: Path) -> None:
     ).scalar_one() == 2
     assert any(action.action_type == "CREATE_POST" for action in actions)
     assert any(action.action_type == "FOLLOW_USER" for action in actions)
+    sa_connection.close()
+    connection.close()
+
+
+def test_mop_rotates_post_targets_instead_of_reusing_same_user_forever(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    mop = MasterOfPuppetsAgent(
+        settings={
+            "puppet_count": 2,
+            "post_budget_percentage": 100,
+            "support_budget_percentage": 0,
+            "network_budget_percentage": 0,
+            "mop_campaigns": [
+                {
+                    "topic_id": 1,
+                    "topic_name": "Climate",
+                    "target_opinion": 0.0,
+                    "target_opinion_group": "Supportive",
+                }
+            ],
+        },
+        llm_client=_FakeLLM(),
+    )
+    mop.setup_database(database, sa_connection)
+    connection.executescript(
+        """
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age, leaning) VALUES
+            (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 'Climate', 30, 'Center'),
+            (5, 'target_2', 'target_2@example.org', 'secret', 'human', 'experiment', 'Climate', 41, 'Center-Left'),
+            (6, 'target_3', 'target_3@example.org', 'secret', 'human', 'experiment', 'Climate', 27, 'Center-Right'),
+            (10, 'mop_alpha', 'mop_alpha@example.org', 'secret', 'mop_puppet', 'hello_1', 'Climate', 33, 'Center'),
+            (11, 'mop_beta', 'mop_beta@example.org', 'secret', 'mop_puppet', 'hello_1', 'Climate', 29, 'Center');
+        INSERT INTO agent_opinion (agent_id, tid, topic_id, id_interacted_with, id_post, opinion) VALUES
+            (2, 1, 1, -1, -1, 0.95),
+            (5, 1, 1, -1, -1, 0.75),
+            (6, 1, 1, -1, -1, 0.35),
+            (10, 1, 1, -1, -1, 0.80),
+            (11, 1, 1, -1, -1, 0.80);
+        INSERT INTO rounds (id, day, hour) VALUES (24, 0, 23);
+        INSERT INTO puppet_registry (p_id, parent_mop_id, username, is_banned, creation_date) VALUES
+            (10, 1, 'mop_alpha', 0, 1),
+            (11, 1, 'mop_beta', 0, 1);
+        INSERT INTO activity_logs (p_id, action_type, target_post_id, status, round_id, details) VALUES
+            (10, 'post', NULL, 'executed', 20, '{''campaign_topic_id'': 1, ''target_user_id'': 2}'),
+            (11, 'post', NULL, 'executed', 22, '{''campaign_topic_id'': 1, ''target_user_id'': 2}');
+        """
+    )
+    connection.commit()
+    context = AgentContext(
+        client_id="client-1",
+        current_round=SimulationRound(id=48, day=1, slot=23),
+        previous_round=SimulationRound(id=47, day=1, slot=22),
+        users=database.get_users(sa_connection),
+        recent_posts=database.get_recent_posts(sa_connection, round_id=48, limit=20),
+        managed_agents=(),
+        connection=sa_connection,
+    )
+
+    target_user = mop._select_post_target_user(
+        context=context,
+        puppet_ids=[10, 11],
+        puppet_id=10,
+        campaign={
+            "topic_id": 1,
+            "runtime_topic_id": 1,
+            "topic_name": "Climate",
+            "target_opinion": 0.0,
+            "target_opinion_group": "Supportive",
+        },
+        planner_rng=random.Random(123),
+        users=context.users,
+    )
+
+    assert target_user is not None
+    assert target_user.id == 5
     sa_connection.close()
     connection.close()
 

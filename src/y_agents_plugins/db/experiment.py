@@ -1416,6 +1416,34 @@ class ExperimentDatabase:
                 resolved.append(name)
         return tuple(resolved)
 
+    def get_available_topics(
+        self,
+        connection: Connection,
+    ) -> tuple[dict[str, Any], ...]:
+        if not self.has_table(connection, "interests"):
+            return ()
+        interests = self.table("interests")
+        interest_column = (
+            interests.c.interest
+            if "interest" in interests.c
+            else interests.c.topic
+            if "topic" in interests.c
+            else None
+        )
+        if interest_column is None:
+            return ()
+        rows = connection.execute(
+            select(interests.c.iid, interest_column).order_by(interests.c.iid.asc())
+        ).all()
+        topics: list[dict[str, Any]] = []
+        for row in rows:
+            topic_id = _raw_id(row[0])
+            topic_name = str(row[1] or "").strip()
+            if topic_id in (None, "") or not topic_name:
+                continue
+            topics.append({"topic_id": topic_id, "topic_name": topic_name})
+        return tuple(topics)
+
     def get_thread_posts(
         self,
         connection: Connection,

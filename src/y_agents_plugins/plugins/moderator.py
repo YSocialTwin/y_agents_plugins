@@ -188,8 +188,12 @@ class ModeratorAgent(BaseAgentPlugin):
         *,
         settings: dict[str, object],
     ) -> PostRecord | None:
-        lookback_rounds = int(settings.get("candidate_window_rounds", 1))
-        threshold = float(settings["toxicity_threshold"])
+        lookback_rounds = self._parse_int_setting(
+            settings.get("candidate_window_rounds", 1), field_name="candidate_window_rounds"
+        )
+        threshold = self._parse_float_setting(
+            settings["toxicity_threshold"], field_name="toxicity_threshold"
+        )
         candidates = [
             post
             for post in context.recent_posts
@@ -232,12 +236,18 @@ class ModeratorAgent(BaseAgentPlugin):
         shadow_ban_infraction_count = self._infraction_count_for_window(
             context=context,
             target_user_id=post.author_id,
-            window_rounds=int(settings.get("shadow_ban_infraction_window_rounds", 24) or 24),
+            window_rounds=self._parse_int_setting(
+                settings.get("shadow_ban_infraction_window_rounds", 24) or 24,
+                field_name="shadow_ban_infraction_window_rounds",
+            ),
         )
         ban_infraction_count = self._infraction_count_for_window(
             context=context,
             target_user_id=post.author_id,
-            window_rounds=int(settings.get("ban_infraction_window_rounds", 24) or 24),
+            window_rounds=self._parse_int_setting(
+                settings.get("ban_infraction_window_rounds", 24) or 24,
+                field_name="ban_infraction_window_rounds",
+            ),
         )
         shadow_ban_applied = self._shadow_ban_enabled(settings) and self._should_apply_shadow_ban(
             infraction_count=shadow_ban_infraction_count,
@@ -260,13 +270,18 @@ class ModeratorAgent(BaseAgentPlugin):
             "reason": settings["moderation_action_type"],
             "system_message_text": message,
             "message_type": "moderation",
-            "message_duration": int(settings["moderation_time_span"]),
+            "message_duration": self._parse_int_setting(
+                settings["moderation_time_span"], field_name="moderation_time_span"
+            ),
             "infraction_count": max(shadow_ban_infraction_count, ban_infraction_count),
             "shadow_ban_infraction_count": shadow_ban_infraction_count,
             "ban_infraction_count": ban_infraction_count,
             "shadow_ban_enabled": self._shadow_ban_enabled(settings),
             "shadow_ban_applied": shadow_ban_applied,
-            "shadow_ban_duration": int(settings.get("shadow_ban_duration_rounds", 0) or 0),
+            "shadow_ban_duration": self._parse_int_setting(
+                settings.get("shadow_ban_duration_rounds", 0) or 0,
+                field_name="shadow_ban_duration_rounds",
+            ),
             "ban_enabled": self._ban_enabled(settings),
             "ban_warning": ban_warning,
             "ban_applied": ban_applied,
@@ -288,12 +303,18 @@ class ModeratorAgent(BaseAgentPlugin):
         shadow_ban_infraction_count = self._infraction_count_for_window(
             context=context,
             target_user_id=post.author_id,
-            window_rounds=int(settings.get("shadow_ban_infraction_window_rounds", 24) or 24),
+            window_rounds=self._parse_int_setting(
+                settings.get("shadow_ban_infraction_window_rounds", 24) or 24,
+                field_name="shadow_ban_infraction_window_rounds",
+            ),
         )
         ban_infraction_count = self._infraction_count_for_window(
             context=context,
             target_user_id=post.author_id,
-            window_rounds=int(settings.get("ban_infraction_window_rounds", 24) or 24),
+            window_rounds=self._parse_int_setting(
+                settings.get("ban_infraction_window_rounds", 24) or 24,
+                field_name="ban_infraction_window_rounds",
+            ),
         )
         shadow_ban_enabled = self._shadow_ban_enabled(settings)
         ban_enabled = self._ban_enabled(settings)
@@ -377,9 +398,20 @@ class ModeratorAgent(BaseAgentPlugin):
         raise RuntimeError(f"User '{user_id}' not found in AgentContext.users")
 
     def _resolved_settings(self, agent: AgentSpec | None = None) -> dict[str, object]:
-        settings = dict(self.settings)
+        base_settings = dict(self.settings)
+        settings = dict(base_settings)
         if agent is not None:
             settings.update(agent.parameters or {})
+        requested_strategy = str(settings.get("moderation_action_type") or "").strip()
+        base_strategy = str(base_settings.get("moderation_action_type") or "").strip()
+        if (
+            requested_strategy == "personalized"
+            and (self.llm is None or not self.llm.is_available)
+            and base_strategy != "personalized"
+        ):
+            settings["moderation_action_type"] = (
+                base_strategy if base_strategy in {"one-fits-all", "personalized"} else "one-fits-all"
+            )
         return settings
 
     def _infraction_count_for_window(
@@ -415,6 +447,21 @@ class ModeratorAgent(BaseAgentPlugin):
         raw = str(settings.get("ban_enabled", "disabled")).strip().lower()
         return raw in {"enabled", "true", "1", "yes", "on"}
 
+    def _parse_float_setting(self, value: object, *, field_name: str) -> float:
+        raw = str(value).strip()
+        if not raw:
+            raise ValueError(f"{field_name} must not be empty")
+        try:
+            return float(raw.replace(",", "."))
+        except ValueError as exc:
+            raise ValueError(f"{field_name} must be numeric") from exc
+
+    def _parse_int_setting(self, value: object, *, field_name: str) -> int:
+        numeric = self._parse_float_setting(value, field_name=field_name)
+        if not numeric.is_integer():
+            raise ValueError(f"{field_name} must be an integer")
+        return int(numeric)
+
     def _should_apply_shadow_ban(
         self,
         *,
@@ -423,8 +470,14 @@ class ModeratorAgent(BaseAgentPlugin):
     ) -> bool:
         if not self._shadow_ban_enabled(settings):
             return False
-        threshold = int(settings.get("shadow_ban_n_infraction", 0) or 0)
-        duration = int(settings.get("shadow_ban_duration_rounds", 0) or 0)
+        threshold = self._parse_int_setting(
+            settings.get("shadow_ban_n_infraction", 0) or 0,
+            field_name="shadow_ban_n_infraction",
+        )
+        duration = self._parse_int_setting(
+            settings.get("shadow_ban_duration_rounds", 0) or 0,
+            field_name="shadow_ban_duration_rounds",
+        )
         return threshold > 0 and duration > 0 and int(infraction_count) >= threshold
 
     def _shadow_ban_notice(
@@ -435,8 +488,14 @@ class ModeratorAgent(BaseAgentPlugin):
     ) -> str:
         if not self._shadow_ban_enabled(settings):
             return ""
-        threshold = int(settings.get("shadow_ban_n_infraction", 0) or 0)
-        duration = int(settings.get("shadow_ban_duration_rounds", 0) or 0)
+        threshold = self._parse_int_setting(
+            settings.get("shadow_ban_n_infraction", 0) or 0,
+            field_name="shadow_ban_n_infraction",
+        )
+        duration = self._parse_int_setting(
+            settings.get("shadow_ban_duration_rounds", 0) or 0,
+            field_name="shadow_ban_duration_rounds",
+        )
         if threshold <= 0 or duration <= 0:
             return ""
         if infraction_count >= threshold:
@@ -457,7 +516,10 @@ class ModeratorAgent(BaseAgentPlugin):
     ) -> bool:
         if not self._ban_enabled(settings):
             return False
-        threshold = int(settings.get("ban_n_infraction", 0) or 0)
+        threshold = self._parse_int_setting(
+            settings.get("ban_n_infraction", 0) or 0,
+            field_name="ban_n_infraction",
+        )
         return threshold > 0 and int(infraction_count) == threshold
 
     def _should_apply_ban(
@@ -468,7 +530,10 @@ class ModeratorAgent(BaseAgentPlugin):
     ) -> bool:
         if not self._ban_enabled(settings):
             return False
-        threshold = int(settings.get("ban_n_infraction", 0) or 0)
+        threshold = self._parse_int_setting(
+            settings.get("ban_n_infraction", 0) or 0,
+            field_name="ban_n_infraction",
+        )
         return threshold > 0 and int(infraction_count) > threshold
 
     def _ban_notice(
@@ -479,7 +544,10 @@ class ModeratorAgent(BaseAgentPlugin):
     ) -> str:
         if not self._ban_enabled(settings):
             return ""
-        threshold = int(settings.get("ban_n_infraction", 0) or 0)
+        threshold = self._parse_int_setting(
+            settings.get("ban_n_infraction", 0) or 0,
+            field_name="ban_n_infraction",
+        )
         if threshold <= 0:
             return ""
         if infraction_count > threshold:
@@ -520,10 +588,14 @@ class ModeratorAgent(BaseAgentPlugin):
         missing = [name for name in required if name not in settings]
         if missing:
             raise ValueError(f"Moderator settings missing required fields: {missing}")
-        threshold = float(settings["toxicity_threshold"])
+        threshold = self._parse_float_setting(
+            settings["toxicity_threshold"], field_name="toxicity_threshold"
+        )
         if threshold < 0 or threshold > 1:
             raise ValueError("toxicity_threshold must be in [0, 1]")
-        time_span = int(settings["moderation_time_span"])
+        time_span = self._parse_int_setting(
+            settings["moderation_time_span"], field_name="moderation_time_span"
+        )
         if time_span <= 0:
             raise ValueError("moderation_time_span must be > 0")
         strategy = str(settings["moderation_action_type"])
@@ -532,9 +604,18 @@ class ModeratorAgent(BaseAgentPlugin):
         if strategy == "personalized" and (self.llm is None or not self.llm.is_available):
             raise ValueError("moderation_action_type 'personalized' requires a configured LangChain LLM model")
         if self._shadow_ban_enabled(settings):
-            infraction_window = int(settings.get("shadow_ban_infraction_window_rounds", 24) or 24)
-            infraction_threshold = int(settings.get("shadow_ban_n_infraction", 0) or 0)
-            shadow_ban_duration = int(settings.get("shadow_ban_duration_rounds", 0) or 0)
+            infraction_window = self._parse_int_setting(
+                settings.get("shadow_ban_infraction_window_rounds", 24) or 24,
+                field_name="shadow_ban_infraction_window_rounds",
+            )
+            infraction_threshold = self._parse_int_setting(
+                settings.get("shadow_ban_n_infraction", 0) or 0,
+                field_name="shadow_ban_n_infraction",
+            )
+            shadow_ban_duration = self._parse_int_setting(
+                settings.get("shadow_ban_duration_rounds", 0) or 0,
+                field_name="shadow_ban_duration_rounds",
+            )
             if infraction_window <= 0:
                 raise ValueError("shadow_ban_infraction_window_rounds must be > 0 when shadow ban is enabled")
             if infraction_threshold <= 0:
@@ -542,8 +623,14 @@ class ModeratorAgent(BaseAgentPlugin):
             if shadow_ban_duration <= 0:
                 raise ValueError("shadow_ban_duration_rounds must be > 0 when shadow ban is enabled")
         if self._ban_enabled(settings):
-            infraction_window = int(settings.get("ban_infraction_window_rounds", 24) or 24)
-            infraction_threshold = int(settings.get("ban_n_infraction", 0) or 0)
+            infraction_window = self._parse_int_setting(
+                settings.get("ban_infraction_window_rounds", 24) or 24,
+                field_name="ban_infraction_window_rounds",
+            )
+            infraction_threshold = self._parse_int_setting(
+                settings.get("ban_n_infraction", 0) or 0,
+                field_name="ban_n_infraction",
+            )
             if infraction_window <= 0:
                 raise ValueError("ban_infraction_window_rounds must be > 0 when ban is enabled")
             if infraction_threshold <= 0:
