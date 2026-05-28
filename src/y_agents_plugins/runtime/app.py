@@ -5,7 +5,15 @@ import logging
 from y_agents_plugins.config import AppConfig
 from y_agents_plugins.db import ExperimentDatabase
 from y_agents_plugins.llm import LangChainTextGenerator
-from y_agents_plugins.plugins import AgentTypeRegistry, HelloWorldAgent, ModeratorAgent
+from y_agents_plugins.plugins import (
+    AgentTypeRegistry,
+    ComicReliefAgent,
+    HelloWorldAgent,
+    MasterOfPuppetsAgent,
+    ModeratorAgent,
+    PropagandaAgent,
+    StressAttackerAgent,
+)
 from y_agents_plugins.runtime.executor import ActionExecutor
 from y_agents_plugins.runtime.loader import AgentSpecLoader
 from y_agents_plugins.runtime.loop import SimulationLoop
@@ -37,7 +45,10 @@ class ClientApp:
         )
         self.agent_loader = AgentSpecLoader()
         self.database = ExperimentDatabase(config.database.url)
-        self.executor = ActionExecutor(self.database)
+        self.executor = ActionExecutor(
+            self.database,
+            stress_reward_config=config.client.stress_reward,
+        )
         self.scheduler = ActivityProfileScheduler(config.client.simulation)
         self.loop = SimulationLoop(
             database=self.database,
@@ -59,6 +70,8 @@ class ClientApp:
         try:
             current_round = self.database.get_current_round(connection)
             self.agent.setup_database(self.database, connection)
+            if self.executor.stress_reward_enabled:
+                self.database.ensure_stress_reward_schema(connection)
             self.database.register_agents(
                 connection,
                 self.managed_agents,
@@ -78,5 +91,9 @@ class ClientApp:
 def build_default_registry() -> AgentTypeRegistry:
     registry = AgentTypeRegistry()
     registry.register(ModeratorAgent)
+    registry.register(PropagandaAgent)
+    registry.register(MasterOfPuppetsAgent)
     registry.register(HelloWorldAgent)
+    registry.register(StressAttackerAgent)
+    registry.register(ComicReliefAgent)
     return registry

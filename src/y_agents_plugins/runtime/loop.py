@@ -4,7 +4,7 @@ import logging
 import time
 from collections.abc import Callable
 
-from sqlalchemy import Connection
+from sqlalchemy.engine import Connection
 
 from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec, SimulationRound
 from y_agents_plugins.db import ExperimentDatabase
@@ -68,6 +68,7 @@ class SimulationLoop:
                             limit=self.recent_posts_limit,
                         ),
                         managed_agents=managed_agents,
+                        connection=connection,
                     )
 
                     self.logger.info(

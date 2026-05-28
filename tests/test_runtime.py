@@ -13,7 +13,10 @@ from y_agents_plugins.config import (
     LLMServerConfig,
     SimulationConfig,
 )
+from y_agents_plugins.db import ExperimentDatabase
 from y_agents_plugins.runtime import ClientApp
+from y_agents_plugins.runtime.app import build_default_registry
+from y_agents_plugins.runtime import manifest as manifest_module
 
 
 def _llm_servers():
@@ -43,6 +46,17 @@ def _simulation(tmp_path: Path, agents_path: Path):
     }
 
 
+def _moderator_settings(**overrides):
+    settings = {
+        "toxicity_threshold": 0.6,
+        "moderation_time_span": 4,
+        "moderation_action_type": "one-fits-all",
+        "candidate_window_rounds": 3,
+    }
+    settings.update(overrides)
+    return settings
+
+
 def _build_db(path: Path) -> None:
     connection = sqlite3.connect(path)
     connection.executescript(
@@ -57,6 +71,7 @@ def _build_db(path: Path) -> None:
             leaning TEXT,
             interests TEXT,
             age INTEGER,
+            gender TEXT,
             oe TEXT,
             co TEXT,
             ex TEXT,
@@ -66,6 +81,8 @@ def _build_db(path: Path) -> None:
             language TEXT,
             owner TEXT,
             education_level TEXT,
+            nationality TEXT,
+            profession TEXT,
             joined_on INTEGER,
             frecsys_type TEXT
         );
@@ -76,11 +93,33 @@ def _build_db(path: Path) -> None:
             comment_to INTEGER DEFAULT -1,
             thread_id INTEGER,
             round INTEGER,
-            shared_from INTEGER DEFAULT -1
+            shared_from INTEGER DEFAULT -1,
+            moderated INTEGER DEFAULT 0
+        );
+        CREATE TABLE reported (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            to_uid INTEGER,
+            to_post INTEGER,
+            from_uid INTEGER NOT NULL,
+            tid INTEGER NOT NULL
+        );
+        CREATE TABLE post_toxicity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL,
+            toxicity REAL DEFAULT 0 NOT NULL
+        );
+        CREATE TABLE sys_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            to_uid INTEGER,
+            message TEXT NOT NULL,
+            from_round INTEGER,
+            duration INTEGER
         );
         INSERT INTO rounds (day, hour) VALUES (0, 0);
-        INSERT INTO user_mgmt (id, username, email, password, user_type, owner, joined_on)
-        VALUES (1, 'alice', 'alice@example.org', 'secret', 'human', 'experiment', 1);
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner, joined_on, leaning, interests, age, gender, language, education_level, nationality, profession, recsys_type, frecsys_type)
+        VALUES (1, 'alice', 'alice@example.org', 'secret', 'human', 'experiment', 1, 'democrat', 'Climate|Technology', 31, 'female', 'English', 'bachelor', 'American', 'Teacher', 'reverse_chronological', 'reverse_chronological');
         INSERT INTO post (id, tweet, user_id, round) VALUES (1, 'hello world', 1, 1);
         """
     )
@@ -88,7 +127,12 @@ def _build_db(path: Path) -> None:
     connection.close()
 
 
-def _build_agents_json(path: Path, *, agent_type: str = "moderator") -> None:
+def _build_agents_json(
+    path: Path,
+    *,
+    agent_type: str = "moderator",
+    parameters: dict | None = None,
+) -> None:
     path.write_text(
         json.dumps(
             [
@@ -100,7 +144,7 @@ def _build_agents_json(path: Path, *, agent_type: str = "moderator") -> None:
                     "agent_type": agent_type,
                     "activity_profile": "Always On",
                     "daily_budget": 42,
-                    "parameters": {"toxicity_keywords": ["abuse"]},
+                    "parameters": parameters or {"toxicity_keywords": ["abuse"]},
                 }
             ]
         )
@@ -125,7 +169,7 @@ def test_client_app_binds_exactly_one_agent_type(tmp_path: Path) -> None:
                 population_json_path=agents_path,
                 raw=_simulation(tmp_path, agents_path),
             ),
-            agent_settings={"toxicity_keywords": ["abuse"]},
+            agent_settings=_moderator_settings(),
             max_ticks=1,
         ),
     )
@@ -179,6 +223,7 @@ def test_client_registers_agents_in_user_mgmt(tmp_path: Path) -> None:
                 population_json_path=agents_path,
                 raw=_simulation(tmp_path, agents_path),
             ),
+            agent_settings=_moderator_settings(),
             max_ticks=1,
         ),
     )
@@ -188,11 +233,180 @@ def test_client_registers_agents_in_user_mgmt(tmp_path: Path) -> None:
 
     connection = sqlite3.connect(db_path)
     row = connection.execute(
-        "SELECT username, email, user_type FROM user_mgmt WHERE username = 'mod_1'"
+        "SELECT username, email, user_type, leaning, interests, age, language, education_level, nationality, profession FROM user_mgmt WHERE username = 'mod_1'"
     ).fetchone()
     connection.close()
 
-    assert row == ("mod_1", "mod_1@example.org", "moderator")
+    assert row[0:3] == ("mod_1", "mod_1@example.org", "moderator")
+    assert row[3] in {"democrat", "republican", "neutral"}
+    assert row[4]
+    assert isinstance(row[5], int)
+    assert row[5] >= 18
+    assert row[6]
+    assert row[7]
+    assert row[8]
+    assert row[9]
+
+
+def test_client_registers_agents_with_required_hpc_user_defaults(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    agents_path = tmp_path / "agents.json"
+    _build_db(db_path)
+    connection = sqlite3.connect(db_path)
+    connection.execute("ALTER TABLE user_mgmt ADD COLUMN round_actions INTEGER NOT NULL DEFAULT 1")
+    connection.execute("ALTER TABLE user_mgmt ADD COLUMN is_page INTEGER NOT NULL DEFAULT 0")
+    connection.commit()
+    connection.close()
+    _build_agents_json(agents_path)
+    config = AppConfig(
+        database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+        client=ClientConfig(
+            client_id="moderator-client",
+            agent_type="moderator",
+            agents_json_path=agents_path,
+            llm_servers=LLMServerConfig(values=_llm_servers()),
+            simulation=SimulationConfig(
+                days=30,
+                slots=24,
+                population_json_path=agents_path,
+                raw=_simulation(tmp_path, agents_path),
+            ),
+            agent_settings=_moderator_settings(),
+            max_ticks=1,
+        ),
+    )
+
+    app = ClientApp(config)
+    app.run()
+
+    connection = sqlite3.connect(db_path)
+    row = connection.execute(
+        "SELECT username, round_actions, is_page FROM user_mgmt WHERE username = 'mod_1'"
+    ).fetchone()
+    connection.close()
+
+    assert row == ("mod_1", 1, 0)
+
+
+def test_client_registers_hpc_agent_without_overwriting_existing_uuid(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    agents_path = tmp_path / "agents.json"
+    connection = sqlite3.connect(db_path)
+    connection.executescript(
+        """
+        CREATE TABLE rounds (id VARCHAR(36) PRIMARY KEY, day INTEGER, hour INTEGER);
+        CREATE TABLE user_mgmt (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            username TEXT NOT NULL,
+            email TEXT,
+            password TEXT NOT NULL,
+            user_type TEXT,
+            owner TEXT,
+            language TEXT,
+            joined_on VARCHAR(36),
+            activity_profile TEXT,
+            round_actions INTEGER NOT NULL,
+            is_page INTEGER NOT NULL
+        );
+        CREATE TABLE post (
+            id VARCHAR(36) PRIMARY KEY NOT NULL,
+            tweet TEXT NOT NULL,
+            user_id VARCHAR(36) NOT NULL,
+            comment_to VARCHAR(36),
+            thread_id VARCHAR(36),
+            round VARCHAR(36),
+            shared_from VARCHAR(36),
+            moderated INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO rounds (id, day, hour) VALUES ('round-1', 0, 0);
+        INSERT INTO user_mgmt (id, username, email, password, user_type, owner, language, joined_on, activity_profile, round_actions, is_page)
+        VALUES ('existing-uuid', 'mod_1', 'mod_1@example.org', 'secret', 'moderator', 'experiment', 'en', 'round-1', 'Always On', 10, 0);
+        """
+    )
+    connection.commit()
+    connection.close()
+    _build_agents_json(agents_path)
+    config = AppConfig(
+        database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+        client=ClientConfig(
+            client_id="moderator-client",
+            agent_type="moderator",
+            agents_json_path=agents_path,
+            llm_servers=LLMServerConfig(values=_llm_servers()),
+            simulation=SimulationConfig(
+                days=30,
+                slots=24,
+                population_json_path=agents_path,
+                raw=_simulation(tmp_path, agents_path),
+            ),
+            agent_settings=_moderator_settings(),
+            max_ticks=1,
+        ),
+    )
+
+    app = ClientApp(config)
+    app.run()
+
+    connection = sqlite3.connect(db_path)
+    row = connection.execute(
+        "SELECT id, username, round_actions, is_page FROM user_mgmt WHERE username = 'mod_1'"
+    ).fetchone()
+    connection.close()
+
+    assert row == ("existing-uuid", "mod_1", 42, 0)
+
+
+def test_app_config_inherits_stress_reward_from_experiment_config(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    agents_path = tmp_path / "agents.json"
+    config_path = tmp_path / "adhoc_client_test.json"
+    _build_db(db_path)
+    _build_agents_json(agents_path)
+    (tmp_path / "config_server.json").write_text(
+        json.dumps(
+            {
+                "stress_reward": {
+                    "enabled": True,
+                    "backward_rounds": 12,
+                    "system": {
+                        "events": {
+                            "moderation": {
+                                "sanctioned": {"stress": 0.11, "reward": -0.07}
+                            }
+                        }
+                    },
+                }
+            }
+        )
+    )
+    config_path.write_text(
+        json.dumps(
+            {
+                "database": {
+                    "sqlite_path": str(db_path),
+                    "poll_interval_seconds": 0.0,
+                },
+                "client": {
+                    "client_id": "moderator-client",
+                    "agent_type": "moderator",
+                    "agents_json_path": str(agents_path),
+                    "servers": _llm_servers(),
+                    "simulation": _simulation(tmp_path, agents_path),
+                    "agent_settings": _moderator_settings(),
+                    "max_ticks": 1,
+                },
+            }
+        )
+    )
+
+    app_config = AppConfig.from_file(config_path)
+
+    assert app_config.client.stress_reward["enabled"] is True
+    assert app_config.client.stress_reward["backward_rounds"] == 12
+    assert (
+        app_config.client.stress_reward["system"]["events"]["moderation"]["sanctioned"]["stress"]
+        == 0.11
+    )
 
 
 def test_agents_json_defaults_to_simulation_population_path(tmp_path: Path) -> None:
@@ -218,6 +432,30 @@ def test_agents_json_defaults_to_simulation_population_path(tmp_path: Path) -> N
     )
 
     assert config.client.agents_json_path == agents_path
+
+
+def test_default_registry_includes_propaganda_agent() -> None:
+    registry = build_default_registry()
+
+    assert "propaganda" in registry.supported_types
+
+
+def test_default_registry_includes_master_of_puppets_agent() -> None:
+    registry = build_default_registry()
+
+    assert "master_of_puppets" in registry.supported_types
+
+
+def test_default_registry_includes_stress_attacker_agent() -> None:
+    registry = build_default_registry()
+
+    assert "stress_attacker" in registry.supported_types
+
+
+def test_default_registry_includes_comic_relief_agent() -> None:
+    registry = build_default_registry()
+
+    assert "comic_relief" in registry.supported_types
 
 
 def test_missing_agent_required_fields_are_rejected(tmp_path: Path) -> None:
@@ -246,6 +484,178 @@ def test_missing_agent_required_fields_are_rejected(tmp_path: Path) -> None:
                 ),
             )
         )
+
+
+def test_client_app_accepts_moderator_settings_from_agent_parameters(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "simulation.db"
+    agents_path = tmp_path / "agents.json"
+    _build_db(db_path)
+    _build_agents_json(
+        agents_path,
+        parameters={
+            "toxicity_threshold": "0.6",
+            "moderation_time_span": "4",
+            "moderation_action_type": "one-fits-all",
+            "candidate_window_rounds": "3",
+        },
+    )
+    config = AppConfig(
+        database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+        client=ClientConfig(
+            client_id="moderator-client",
+            agent_type="moderator",
+            agents_json_path=agents_path,
+            llm_servers=LLMServerConfig(values=_llm_servers()),
+            simulation=SimulationConfig(
+                days=30,
+                slots=24,
+                population_json_path=agents_path,
+                raw=_simulation(tmp_path, agents_path),
+            ),
+            agent_settings={},
+            max_ticks=1,
+        ),
+    )
+
+    app = ClientApp(config)
+    app.run()
+
+    connection = sqlite3.connect(db_path)
+    row = connection.execute(
+        "SELECT strategy_key FROM plugin_moderation_strategies ORDER BY strategy_key"
+    ).fetchall()
+    connection.close()
+
+    assert row == [
+        ("one-fits-all",),
+        ("personalized",),
+    ]
+
+
+def test_client_app_accepts_locale_decimal_moderator_threshold(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation_locale.db"
+    agents_path = tmp_path / "agents_locale.json"
+    _build_db(db_path)
+    _build_agents_json(
+        agents_path,
+        parameters={
+            "toxicity_threshold": "0,6",
+            "moderation_time_span": "4",
+            "moderation_action_type": "one-fits-all",
+            "candidate_window_rounds": "3",
+        },
+    )
+    config = AppConfig(
+        database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+        client=ClientConfig(
+            client_id="moderator-client",
+            agent_type="moderator",
+            agents_json_path=agents_path,
+            llm_servers=LLMServerConfig(values=_llm_servers()),
+            simulation=SimulationConfig(
+                days=30,
+                slots=24,
+                population_json_path=agents_path,
+                raw=_simulation(tmp_path, agents_path),
+            ),
+            agent_settings={},
+            max_ticks=1,
+        ),
+    )
+
+    app = ClientApp(config)
+    app.run()
+
+    connection = sqlite3.connect(db_path)
+    row = connection.execute(
+        "SELECT strategy_key FROM plugin_moderation_strategies ORDER BY strategy_key"
+    ).fetchall()
+    connection.close()
+
+    assert row == [
+        ("one-fits-all",),
+        ("personalized",),
+    ]
+
+
+def test_second_moderator_client_reuses_existing_plugin_tables(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    agents_a = tmp_path / "agents_a.json"
+    agents_b = tmp_path / "agents_b.json"
+    _build_db(db_path)
+    moderator_parameters = {
+        "toxicity_threshold": "0.6",
+        "moderation_time_span": "4",
+        "moderation_action_type": "one-fits-all",
+        "candidate_window_rounds": "3",
+    }
+    _build_agents_json(agents_a, parameters=moderator_parameters)
+    _build_agents_json(agents_b, parameters=moderator_parameters)
+
+    def _config(client_id: str, agents_path: Path) -> AppConfig:
+        return AppConfig(
+            database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+            client=ClientConfig(
+                client_id=client_id,
+                agent_type="moderator",
+                agents_json_path=agents_path,
+                llm_servers=LLMServerConfig(values=_llm_servers()),
+                simulation=SimulationConfig(
+                    days=30,
+                    slots=24,
+                    population_json_path=agents_path,
+                    raw=_simulation(tmp_path, agents_path),
+                ),
+                agent_settings={},
+                max_ticks=1,
+            ),
+        )
+
+    ClientApp(_config("moderator-a", agents_a)).run()
+    ClientApp(_config("moderator-b", agents_b)).run()
+
+    connection = sqlite3.connect(db_path)
+    counts = connection.execute(
+        "SELECT COUNT(*) FROM plugin_moderation_strategies"
+    ).fetchone()[0]
+    connection.close()
+
+    assert counts == 2
+
+
+def test_manifest_loader_prefers_meta_registry(tmp_path: Path, monkeypatch) -> None:
+    plugin_root = tmp_path / "plugin"
+    runtime_dir = plugin_root / "src" / "y_agents_plugins" / "runtime"
+    runtime_dir.mkdir(parents=True)
+    registry_path = plugin_root / "meta" / "registry.json"
+    registry_path.parent.mkdir(parents=True)
+    registry_path.write_text(
+        json.dumps(
+            {
+                "agent_types": [
+                    {
+                        "agent_type": "moderator",
+                        "display_name": "Moderator Agent",
+                        "description": "desc",
+                        "parameters": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        manifest_module,
+        "__file__",
+        str(runtime_dir / "manifest.py"),
+        raising=False,
+    )
+
+    manifest = manifest_module.load_agent_type_manifest()
+
+    assert manifest.require_known_agent_type("moderator").display_name == "Moderator Agent"
 
 
 def test_missing_client_llm_fields_are_rejected() -> None:
@@ -319,6 +729,22 @@ def test_client_supports_sqlalchemy_url(tmp_path: Path) -> None:
     assert app.database.database_url == f"sqlite:///{db_path}"
 
 
+def test_sqlite_experiment_database_enables_wal_and_busy_timeout(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    _build_db(db_path)
+
+    database = ExperimentDatabase(db_path)
+    connection = database.connect()
+    try:
+        journal_mode = connection.exec_driver_sql("PRAGMA journal_mode").scalar_one()
+        busy_timeout = connection.exec_driver_sql("PRAGMA busy_timeout").scalar_one()
+    finally:
+        connection.close()
+
+    assert str(journal_mode).lower() == "wal"
+    assert int(busy_timeout) == 30000
+
+
 def test_client_exposes_langchain_llm_configuration(tmp_path: Path) -> None:
     db_path = tmp_path / "simulation.db"
     agents_path = tmp_path / "agents.json"
@@ -356,7 +782,14 @@ def test_moderator_client_bootstraps_plugin_tables(tmp_path: Path) -> None:
     connection.execute(
         "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, joined_on) VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment', 1)"
     )
-    connection.execute("UPDATE post SET tweet = 'this is abuse' WHERE id = 1")
+    connection.execute("UPDATE post SET tweet = 'this is abusive content' WHERE id = 1")
+    connection.execute("UPDATE post SET user_id = 2 WHERE id = 1")
+    connection.execute(
+        "INSERT INTO reported (type, to_uid, to_post, from_uid, tid) VALUES ('post', 2, 1, 1, 1)"
+    )
+    connection.execute(
+        "INSERT INTO post_toxicity (post_id, toxicity) VALUES (1, 0.8)"
+    )
     connection.commit()
     connection.close()
     _build_agents_json(agents_path)
@@ -373,7 +806,7 @@ def test_moderator_client_bootstraps_plugin_tables(tmp_path: Path) -> None:
                 population_json_path=agents_path,
                 raw=_simulation(tmp_path, agents_path),
             ),
-            agent_settings={"toxicity_keywords": ["abuse"]},
+            agent_settings=_moderator_settings(),
             max_ticks=1,
         ),
     )
@@ -388,10 +821,111 @@ def test_moderator_client_bootstraps_plugin_tables(tmp_path: Path) -> None:
         "SELECT moderated_agent_id, moderation_count FROM plugin_moderation_counts"
     ).fetchall()
     actions = connection.execute(
-        "SELECT moderated_post_id, moderation_type, round_id FROM plugin_moderation_actions"
+        "SELECT moderated_post_id, moderation_type, round_id, generated_comment_id FROM plugin_moderation_actions"
+    ).fetchall()
+    sys_messages = connection.execute(
+        "SELECT type, to_uid, message, from_round, duration FROM sys_messages"
+    ).fetchall()
+    moderated = connection.execute("SELECT moderated FROM post WHERE id = 1").fetchone()
+    moderation_comment = connection.execute(
+        "SELECT tweet, user_id, comment_to, thread_id, round FROM post WHERE id = 2"
+    ).fetchone()
+    connection.close()
+
+    assert strategies == [("one-fits-all",), ("personalized",)]
+    assert counts == [(2, 1)]
+    assert actions == [(1, "one-fits-all", 1, 2)]
+    assert sys_messages == [
+        (
+            "moderation",
+            2,
+            "Your recent post violated the platform moderation policy. Please adjust your behavior.",
+            1,
+            4,
+        )
+    ]
+    assert moderated == (1,)
+    assert moderation_comment == (
+        sys_messages[0][2],
+        3,
+        1,
+        1,
+        1,
+    )
+
+
+def test_personalized_moderator_requires_llm_model(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    agents_path = tmp_path / "agents.json"
+    _build_db(db_path)
+    _build_agents_json(agents_path)
+
+    config = AppConfig(
+        database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+        client=ClientConfig(
+            client_id="moderator-client",
+            agent_type="moderator",
+            agents_json_path=agents_path,
+            llm_servers=LLMServerConfig(values=_llm_servers()),
+            simulation=SimulationConfig(
+                days=30,
+                slots=24,
+                population_json_path=agents_path,
+                raw=_simulation(tmp_path, agents_path),
+            ),
+            agent_settings=_moderator_settings(moderation_action_type="personalized"),
+            max_ticks=1,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="requires a configured LangChain LLM model"):
+        ClientApp(config).run()
+
+
+def test_personalized_moderator_agent_override_falls_back_to_shared_standard_mode(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "simulation_override.db"
+    agents_path = tmp_path / "agents_override.json"
+    _build_db(db_path)
+    _build_agents_json(
+        agents_path,
+        parameters={
+            "toxicity_threshold": "0.6",
+            "moderation_time_span": "4",
+            "moderation_action_type": "personalized",
+            "candidate_window_rounds": "3",
+        },
+    )
+
+    config = AppConfig(
+        database=DatabaseConfig(sqlite_path=db_path, poll_interval_seconds=0.0),
+        client=ClientConfig(
+            client_id="moderator-client",
+            agent_type="moderator",
+            agents_json_path=agents_path,
+            llm_servers=LLMServerConfig(values=_llm_servers()),
+            simulation=SimulationConfig(
+                days=30,
+                slots=24,
+                population_json_path=agents_path,
+                raw=_simulation(tmp_path, agents_path),
+            ),
+            agent_settings=_moderator_settings(moderation_action_type="one-fits-all"),
+            max_ticks=1,
+        ),
+    )
+
+    app = ClientApp(config)
+    app.run()
+
+    connection = sqlite3.connect(db_path)
+    strategies = connection.execute(
+        "SELECT strategy_key FROM plugin_moderation_strategies ORDER BY strategy_key"
     ).fetchall()
     connection.close()
 
-    assert strategies == [("keyword_match",)]
-    assert counts == [(1, 1)]
-    assert actions == [(1, "keyword_match", 1)]
+    assert strategies == [
+        ("one-fits-all",),
+        ("personalized",),
+    ]

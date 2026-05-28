@@ -34,7 +34,7 @@ class AgentTypeManifest:
 
 
 def load_agent_type_manifest() -> AgentTypeManifest:
-    raw = json.loads(_manifest_path().read_text())
+    raw = json.loads(_manifest_path().read_text(encoding="utf-8"))
     descriptions: dict[str, AgentTypeDescription] = {}
     for entry in raw["agent_types"]:
         parameters = tuple(
@@ -57,4 +57,13 @@ def load_agent_type_manifest() -> AgentTypeManifest:
 
 
 def _manifest_path() -> Path:
-    return Path(__file__).resolve().parents[3] / "plugins_exposed" / "agent_types.json"
+    base = Path(__file__).resolve().parents[3]
+    candidates = (
+        base / "meta" / "registry.json",
+        base / "plugins_exposed" / "agent_types.json",
+        base / "plugin_exposed" / "agent_types.json",
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]

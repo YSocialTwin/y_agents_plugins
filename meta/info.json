@@ -1,0 +1,10 @@
+{
+  "plugin_name": "y_agents_plugins",
+  "category": "Agent Extensions",
+  "group": "Agent Plugins",
+  "description": "Plugin-defined ad hoc agent families for YSocial experiments.",
+  "authors": [
+    "YSocialTwin"
+  ],
+  "repository_url": "https://github.com/YSocialTwin/y_agents_plugins"
+}

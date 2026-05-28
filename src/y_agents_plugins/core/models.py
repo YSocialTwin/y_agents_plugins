@@ -8,28 +8,43 @@ from typing import Any
 class SimulationRound:
     """Database-backed representation of the current experiment round."""
 
-    id: int
+    id: Any
     day: int
     slot: int
+
+    @property
+    def ordinal(self) -> int:
+        return int(self.day) * 24 + int(self.slot)
 
 
 @dataclass(frozen=True)
 class UserRecord:
-    id: int
+    id: Any
     username: str
     user_type: str | None = None
     owner: str | None = None
+    profile: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class PostRecord:
-    id: int
-    author_id: int
+    id: Any
+    author_id: Any
     text: str
-    round_id: int
-    comment_to: int | None = None
-    thread_id: int | None = None
-    shared_from: int | None = None
+    round_id: Any
+    comment_to: Any | None = None
+    thread_id: Any | None = None
+    shared_from: Any | None = None
+    round_day: int | None = None
+    round_slot: int | None = None
+    moderated: int = 0
+    is_moderation_comment: int = 0
+    toxicity: float | None = None
+    reported_count: int = 0
+
+    @property
+    def round_ordinal(self) -> int:
+        return int(self.round_day or 0) * 24 + int(self.round_slot or 0)
 
 
 @dataclass(frozen=True)
@@ -51,6 +66,7 @@ class AgentContext:
     users: tuple[UserRecord, ...]
     recent_posts: tuple[PostRecord, ...]
     managed_agents: tuple["AgentSpec", ...]
+    connection: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -64,7 +80,7 @@ class AgentSpec:
     agent_type: str
     activity_profile: str
     daily_budget: float
-    joined_on: int = 0
+    joined_on: Any = 0
     leaning: str | None = None
     interests: str | None = None
     age: int | None = None

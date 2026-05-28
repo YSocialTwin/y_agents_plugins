@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from y_agents_plugins.stress_reward import deep_update
+
 
 REQUIRED_LLM_SERVER_FIELDS = (
     "llm",
@@ -17,6 +19,12 @@ REQUIRED_LLM_SERVER_FIELDS = (
     "llm_v_temperature",
     "api",
 )
+
+DEFAULT_STRESS_REWARD_CONFIG = {
+    "enabled": False,
+    "backward_rounds": 24,
+    "system": {},
+}
 
 
 @dataclass(frozen=True)
@@ -94,6 +102,9 @@ class ClientConfig:
     agents_json_path: Path | None = None
     agents_settings: dict[str, Any] = field(default_factory=dict)
     agent_settings: dict[str, Any] = field(default_factory=dict)
+    stress_reward: dict[str, Any] = field(
+        default_factory=lambda: dict(DEFAULT_STRESS_REWARD_CONFIG)
+    )
     recent_posts_limit: int = 25
     max_ticks: int | None = None
 
@@ -129,10 +140,12 @@ class AppConfig:
 
     @classmethod
     def from_file(cls, path: str | Path) -> "AppConfig":
-        raw = json.loads(Path(path).read_text())
+        raw_path = Path(path).expanduser().resolve()
+        raw = json.loads(raw_path.read_text())
         database = raw.get("database", {})
         client = raw.get("client", {})
         simulation = client.get("simulation", {})
+        stress_reward = _resolve_stress_reward_config(raw_path, raw)
         return cls(
             database=DatabaseConfig(
                 sqlite_path=(
@@ -162,6 +175,7 @@ class AppConfig:
                 ),
                 agents_settings=dict(client.get("agents", {})),
                 agent_settings=dict(client.get("agent_settings", {})),
+                stress_reward=stress_reward,
                 recent_posts_limit=int(client.get("recent_posts_limit", 25)),
                 max_ticks=(
                     int(client["max_ticks"])
@@ -193,3 +207,50 @@ def _parse_activity_profile_slots(raw_value: Any, *, slots_per_day: int) -> tupl
     if not unique_slots:
         raise ValueError("Activity profile must contain at least one valid slot")
     return unique_slots
+
+
+def _normalize_stress_reward_config(raw_config: Any) -> dict[str, Any]:
+    normalized = deep_update(DEFAULT_STRESS_REWARD_CONFIG, {})
+    if isinstance(raw_config, dict):
+        normalized = deep_update(normalized, raw_config)
+    normalized["enabled"] = bool(normalized.get("enabled", False))
+    try:
+        normalized["backward_rounds"] = max(0, int(normalized.get("backward_rounds", 24)))
+    except (TypeError, ValueError):
+        normalized["backward_rounds"] = 24
+    if not isinstance(normalized.get("system"), dict):
+        normalized["system"] = {}
+    return normalized
+
+
+def _resolve_stress_reward_config(config_path: Path, raw_payload: dict[str, Any]) -> dict[str, Any]:
+    client = raw_payload.get("client", {}) if isinstance(raw_payload, dict) else {}
+    direct = client.get("stress_reward")
+    if isinstance(direct, dict):
+        return _normalize_stress_reward_config(direct)
+
+    experiment_config_path = config_path.parent / "config_server.json"
+    if experiment_config_path.exists():
+        try:
+            experiment_payload = json.loads(experiment_config_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            experiment_payload = {}
+        stress_reward_cfg = (
+            experiment_payload.get("stress_reward")
+            if isinstance(experiment_payload, dict)
+            else None
+        )
+        if isinstance(stress_reward_cfg, dict):
+            normalized = dict(stress_reward_cfg)
+            normalized.setdefault(
+                "enabled",
+                bool(
+                    experiment_payload.get(
+                        "stress_reward_enabled",
+                        experiment_payload.get("stress_reward_annotation", False),
+                    )
+                ),
+            )
+            return _normalize_stress_reward_config(normalized)
+
+    return _normalize_stress_reward_config(None)
