@@ -1115,6 +1115,8 @@ class ExperimentDatabase:
             return
         post_topics = self.table("post_topics")
         topic_store_value = self._post_topic_store_value(connection, post_topics)
+        if topic_store_value is None:
+            return
         existing_topic_ids = {
             str(_raw_id(row[0]))
             for row in connection.execute(
@@ -1164,6 +1166,14 @@ class ExperimentDatabase:
             else None
         )
         if target_column in {"interest", "topic"} and interest_column is not None:
+            if not getattr(interest_column, "primary_key", False):
+                unique_columns = {
+                    tuple(index["column_names"] or [])
+                    for index in inspect(connection).get_indexes("interests")
+                    if index.get("unique")
+                }
+                if (interest_column.name,) not in unique_columns:
+                    return None
             rows = connection.execute(select(interests.c.iid, interest_column)).all()
             by_id = {
                 str(_raw_id(row[0])): row[1]
