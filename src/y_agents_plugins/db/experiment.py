@@ -1114,6 +1114,7 @@ class ExperimentDatabase:
         if not topic_ids or not self.has_table(connection, "post_topics"):
             return
         post_topics = self.table("post_topics")
+        topic_store_value = self._post_topic_store_value(connection, post_topics)
         existing_topic_ids = {
             str(_raw_id(row[0]))
             for row in connection.execute(
@@ -1121,12 +1122,7 @@ class ExperimentDatabase:
             ).all()
         }
         for topic_id in topic_ids:
-            normalized_topic_id = self._coerce_for_column(
-                connection,
-                "post_topics",
-                "topic_id",
-                topic_id,
-            )
+            normalized_topic_id = topic_store_value(topic_id)
             if str(normalized_topic_id) in existing_topic_ids:
                 continue
             connection.execute(
@@ -1141,6 +1137,63 @@ class ExperimentDatabase:
                     )
                 )
             )
+
+    def _post_topic_store_value(self, connection: Connection, post_topics: Table):
+        if not self.has_table(connection, "interests"):
+            return lambda value: self._coerce_for_column(
+                connection,
+                "post_topics",
+                "topic_id",
+                value,
+            )
+        fk_list = inspect(connection).get_foreign_keys("post_topics")
+        target_column = None
+        for fk in fk_list:
+            constrained = fk.get("constrained_columns") or []
+            if constrained and constrained[0] == "topic_id":
+                referred = fk.get("referred_columns") or []
+                if referred:
+                    target_column = str(referred[0])
+                    break
+        interests = self.table("interests")
+        interest_column = (
+            interests.c.interest
+            if "interest" in interests.c
+            else interests.c.topic
+            if "topic" in interests.c
+            else None
+        )
+        if target_column in {"interest", "topic"} and interest_column is not None:
+            rows = connection.execute(select(interests.c.iid, interest_column)).all()
+            by_id = {
+                str(_raw_id(row[0])): row[1]
+                for row in rows
+                if row[0] not in (None, "") and row[1] not in (None, "")
+            }
+            by_name = {
+                str(row[1]).strip().casefold(): row[1]
+                for row in rows
+                if row[1] not in (None, "")
+            }
+
+            def _resolve(value: Any) -> Any:
+                if value in (None, ""):
+                    return value
+                key = str(value)
+                if key in by_id:
+                    return by_id[key]
+                normalized = key.strip().casefold()
+                if normalized in by_name:
+                    return by_name[normalized]
+                return str(value)
+
+            return _resolve
+        return lambda value: self._coerce_for_column(
+            connection,
+            "post_topics",
+            "topic_id",
+            value,
+        )
 
     def _insert_hashtags_for_text(
         self,
