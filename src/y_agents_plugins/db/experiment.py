@@ -94,20 +94,14 @@ class ExperimentDatabase:
         table: Table,
         values: dict[str, Any],
     ) -> int:
-        try:
-            result = connection.execute(table.insert().values(**values).returning(table.c.id))
-            return int(result.scalar_one())
-        except Exception as exc:
-            if "RETURNING is not supported by this dialect" not in str(exc):
-                raise
-            result = connection.execute(table.insert().values(**values))
-            inserted_primary_key = getattr(result, "inserted_primary_key", None) or ()
-            if inserted_primary_key and inserted_primary_key[0] is not None:
-                return int(inserted_primary_key[0])
-            row = connection.execute(select(func.max(table.c.id))).first()
-            if row is None or row[0] is None:
-                raise RuntimeError(f"Unable to determine inserted id for table '{table.name}'")
-            return int(row[0])
+        result = connection.execute(table.insert().values(**values))
+        inserted_primary_key = getattr(result, "inserted_primary_key", None) or ()
+        if inserted_primary_key and inserted_primary_key[0] is not None:
+            return int(inserted_primary_key[0])
+        row = connection.execute(select(func.max(table.c.id))).first()
+        if row is None or row[0] is None:
+            raise RuntimeError(f"Unable to determine inserted id for table '{table.name}'")
+        return int(row[0])
 
     @staticmethod
     def _configure_sqlite_engine(engine: Engine) -> None:
