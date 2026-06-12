@@ -2546,6 +2546,9 @@ class ExperimentDatabase:
     @staticmethod
     def _with_post_defaults(connection: Connection, values: dict[str, Any], post_table: Table) -> dict[str, Any]:
         enriched = dict(values)
+        for column_name in ("news_id", "image_id", "image_post_id"):
+            if column_name in post_table.c:
+                enriched.setdefault(column_name, None)
         if "moderated" in post_table.c:
             enriched.setdefault("moderated", 0)
         if "is_moderation_comment" in post_table.c:
