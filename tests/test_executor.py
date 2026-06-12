@@ -2055,6 +2055,56 @@ def test_comic_relief_agent_generates_tagged_post_with_opening_override(tmp_path
     connection.close()
 
 
+def test_executor_resolves_string_topic_labels_before_post_topic_insert(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute("INSERT INTO interests (iid, topic) VALUES (2, 'dsa')")
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner, interests, age, leaning) "
+        "VALUES (2, 'comic_1', 'comic_1@example.org', 'secret', 'comic_relief', 'experiment', 'dsa', 31, 'neutral')"
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    executor = ActionExecutor(database)
+    agent = AgentSpec(
+        name="Comic One",
+        username="comic_1",
+        email="comic_1@example.org",
+        password="secret",
+        agent_type="comic_relief",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="comic-client",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=(),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+    action = AgentAction(
+        agent_type="comic_relief",
+        action_type="CREATE_POST",
+        payload={
+            "text": "@comic_1 testing topic normalization",
+            "topic_ids": ["dsa"],
+        },
+    )
+
+    executor.execute(sa_connection, context=context, agent=agent, action=action)
+
+    inserted_topic = sa_connection.execute(
+        text("SELECT topic_id FROM post_topics ORDER BY post_id DESC LIMIT 1")
+    ).fetchone()
+    assert inserted_topic == (2,)
+    sa_connection.close()
+    connection.close()
+
+
 def test_comic_relief_agent_generates_tagged_comment_with_reply_override(tmp_path: Path) -> None:
     db_path = tmp_path / "simulation.db"
     connection = _build_db(db_path)

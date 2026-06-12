@@ -415,7 +415,23 @@ class ExperimentDatabase:
             "round": round_id,
             "shared_from": None,
         }
-        post_id = self._insert_with_fallback(connection, post, values)
+        values = self._with_post_defaults(connection, self._with_generated_id(connection, "post", values), post)
+        result = connection.execute(post.insert().values(**values))
+        post_id = _raw_id(
+            result.inserted_primary_key[0] if result.inserted_primary_key else None
+        )
+        if post_id is None:
+            created = connection.execute(
+                select(post.c.id)
+                .where(post.c.user_id == user_id)
+                .where(post.c.round == round_id)
+                .where(post.c.tweet == text)
+                .order_by(post.c.id.desc())
+                .limit(1)
+            ).first()
+            if created is None:
+                raise RuntimeError("Failed to create post")
+            post_id = _raw_id(created[0])
         if "thread_id" in post.c:
             connection.execute(
                 post.update().where(post.c.id == post_id).values(thread_id=post_id)
@@ -1463,19 +1479,23 @@ class ExperimentDatabase:
             else None
         )
         if configured_topic_id is not None:
-            normalized_topic_id = self._coerce_for_column(
-                connection,
-                "interests",
-                "iid",
-                configured_topic_id,
-            )
-            row = connection.execute(
-                select(interests.c.iid)
-                .where(interests.c.iid == normalized_topic_id)
-                .limit(1)
-            ).first()
-            if row is not None:
-                return _raw_id(row[0])
+            try:
+                normalized_topic_id = self._coerce_for_column(
+                    connection,
+                    "interests",
+                    "iid",
+                    configured_topic_id,
+                )
+            except Exception:
+                normalized_topic_id = None
+            if normalized_topic_id is not None:
+                row = connection.execute(
+                    select(interests.c.iid)
+                    .where(interests.c.iid == normalized_topic_id)
+                    .limit(1)
+                ).first()
+                if row is not None:
+                    return _raw_id(row[0])
         normalized_name = str(topic_name or "").strip()
         if interest_column is None or not normalized_name:
             return None

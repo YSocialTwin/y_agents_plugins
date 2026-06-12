@@ -52,7 +52,7 @@ class ActionExecutor:
                 username=actor_username,
                 text=text,
                 round_id=context.current_round.id,
-                topic_ids=self._topic_ids_from_action(action),
+                topic_ids=self._topic_ids_from_action(connection, action),
             )
             self._persist_mop_activity(
                 connection,
@@ -85,7 +85,7 @@ class ActionExecutor:
                 text=str(action.payload["text"]),
                 round_id=context.current_round.id,
                 parent_post_id=action.payload["parent_post_id"],
-                topic_ids=self._topic_ids_from_action(action),
+                topic_ids=self._topic_ids_from_action(connection, action),
             )
             self._persist_mop_activity(
                 connection,
@@ -228,7 +228,7 @@ class ActionExecutor:
                 shared_post_id=action.payload["post_id"],
                 text=str(action.payload.get("text") or ""),
                 round_id=context.current_round.id,
-                topic_ids=self._topic_ids_from_action(action),
+                topic_ids=self._topic_ids_from_action(connection, action),
             )
             self._persist_mop_activity(
                 connection,
@@ -701,15 +701,35 @@ class ActionExecutor:
         user_type = (self.database.get_user_type(connection, user_id) or "").strip().lower()
         return user_type not in self._UNTRACKED_PLUGIN_USER_TYPES
 
-    @staticmethod
-    def _topic_ids_from_action(action: AgentAction) -> list[Any]:
+    def _topic_ids_from_action(self, connection, action: AgentAction) -> list[Any]:
         explicit = action.payload.get("topic_ids")
         if isinstance(explicit, (list, tuple)):
-            return [topic_id for topic_id in explicit if topic_id not in (None, "")]
+            return [
+                normalized_topic_id
+                for topic_id in explicit
+                if topic_id not in (None, "")
+                if (normalized_topic_id := self._normalize_topic_id(connection, topic_id)) is not None
+            ]
         activity = action.payload.get("propaganda_activity")
         if not isinstance(activity, dict):
             return []
         topic_id = activity.get("topic_id")
         if topic_id in (None, ""):
             return []
-        return [topic_id]
+        normalized_topic_id = self._normalize_topic_id(connection, topic_id)
+        return [normalized_topic_id] if normalized_topic_id is not None else []
+
+    def _normalize_topic_id(self, connection, topic_id: Any) -> Any | None:
+        if topic_id in (None, ""):
+            return None
+        topic_value = topic_id
+        if self.database.has_table(connection, "interests"):
+            resolved = self.database.resolve_interest_topic_id(
+                connection,
+                configured_topic_id=topic_id,
+                topic_name=str(topic_id),
+            )
+            if resolved is None:
+                return None
+            topic_value = resolved
+        return topic_value
