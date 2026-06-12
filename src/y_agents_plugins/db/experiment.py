@@ -2546,9 +2546,16 @@ class ExperimentDatabase:
     @staticmethod
     def _with_post_defaults(connection: Connection, values: dict[str, Any], post_table: Table) -> dict[str, Any]:
         enriched = dict(values)
-        for column_name in ("news_id", "image_id", "image_post_id"):
-            if column_name in post_table.c:
-                enriched.setdefault(column_name, None)
+        post_fk_columns = {
+            fk.get("constrained_columns", [None])[0]
+            for fk in inspect(connection).get_foreign_keys(post_table.name)
+            if fk.get("constrained_columns")
+        }
+        for column_name in post_fk_columns:
+            if column_name in post_table.c and column_name not in enriched:
+                column = post_table.c[column_name]
+                if getattr(column, "nullable", True) or column.default is not None:
+                    enriched[column_name] = None
         if "moderated" in post_table.c:
             enriched.setdefault("moderated", 0)
         if "is_moderation_comment" in post_table.c:
