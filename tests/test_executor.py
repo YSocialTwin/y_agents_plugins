@@ -2153,6 +2153,37 @@ def test_executor_persists_created_at_on_posts(tmp_path: Path) -> None:
     connection.close()
 
 
+def test_recent_posts_include_reported_count_for_moderation(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) "
+        "VALUES (2, 'target_1', 'target_1@example.org', 'secret', 'human', 'experiment')"
+    )
+    connection.execute(
+        "INSERT INTO user_mgmt (id, username, email, password, user_type, owner) "
+        "VALUES (3, 'moderator_1', 'moderator_1@example.org', 'secret', 'moderator', 'experiment')"
+    )
+    connection.execute(
+        "INSERT INTO post (id, tweet, user_id, comment_to, thread_id, round, shared_from, moderated, is_moderation_comment, created_at) "
+        "VALUES (1, 'Needs moderation', 2, -1, 1, 1, -1, 0, 0, CURRENT_TIMESTAMP)"
+    )
+    connection.execute(
+        "INSERT INTO reported (type, to_uid, to_post, from_uid, tid) "
+        "VALUES ('synthetic_pressure', 2, 1, 3, 1)"
+    )
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    recent_posts = database.get_recent_posts(sa_connection, round_id=1, limit=10)
+
+    assert len(recent_posts) == 1
+    assert recent_posts[0].reported_count == 1
+    sa_connection.close()
+    connection.close()
+
+
 def test_comic_relief_agent_generates_tagged_comment_with_reply_override(tmp_path: Path) -> None:
     db_path = tmp_path / "simulation.db"
     connection = _build_db(db_path)
