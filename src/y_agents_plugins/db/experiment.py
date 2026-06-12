@@ -410,10 +410,10 @@ class ExperimentDatabase:
         values = {
             "tweet": text,
             "user_id": user_id,
-            "comment_to": -1,
+            "comment_to": None,
             "thread_id": None,
             "round": round_id,
-            "shared_from": -1,
+            "shared_from": None,
         }
         post_id = self._insert_with_fallback(connection, post, values)
         if "thread_id" in post.c:
@@ -467,7 +467,7 @@ class ExperimentDatabase:
             "comment_to": parent_post_id,
             "thread_id": thread_id,
             "round": round_id,
-            "shared_from": -1,
+            "shared_from": None,
         }
         if "is_moderation_comment" in post.c:
             values["is_moderation_comment"] = int(bool(is_moderation_comment))
@@ -553,7 +553,7 @@ class ExperimentDatabase:
         values: dict[str, Any] = {
             "tweet": str(text or original.get("tweet") or ""),
             "user_id": user_id,
-            "comment_to": -1,
+            "comment_to": None,
             "thread_id": None,
             "round": round_id,
             "shared_from": shared_post_id,

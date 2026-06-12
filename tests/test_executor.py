@@ -330,7 +330,7 @@ def test_executor_persists_post_action(tmp_path: Path) -> None:
 
     assert count == 1
     assert row is not None
-    assert int(row["comment_to"]) == -1
+    assert row["comment_to"] is None
     assert int(row["thread_id"]) > 0
     sa_connection.close()
     connection.close()
