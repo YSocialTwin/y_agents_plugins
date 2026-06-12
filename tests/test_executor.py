@@ -3528,7 +3528,7 @@ def test_mop_supports_uuid_topic_ids_on_hpc_schema(tmp_path: Path) -> None:
     mop.setup_database(database, sa_connection)
     context = AgentContext(
         client_id="client-1",
-        current_round=SimulationRound(id="round-1", day=0, slot=0),
+        current_round=SimulationRound(id="round-1", day=0, slot=23),
         previous_round=None,
         users=database.get_users(sa_connection),
         recent_posts=database.get_recent_posts(sa_connection, round_id="round-1", limit=20),

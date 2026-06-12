@@ -88,6 +88,27 @@ class ExperimentDatabase:
     def connect(self) -> Connection:
         return self.engine.connect()
 
+    def _insert_with_fallback(
+        self,
+        connection: Connection,
+        table: Table,
+        values: dict[str, Any],
+    ) -> int:
+        try:
+            result = connection.execute(table.insert().values(**values).returning(table.c.id))
+            return int(result.scalar_one())
+        except Exception as exc:
+            if "RETURNING is not supported by this dialect" not in str(exc):
+                raise
+            result = connection.execute(table.insert().values(**values))
+            inserted_primary_key = getattr(result, "inserted_primary_key", None) or ()
+            if inserted_primary_key and inserted_primary_key[0] is not None:
+                return int(inserted_primary_key[0])
+            row = connection.execute(select(func.max(table.c.id))).first()
+            if row is None or row[0] is None:
+                raise RuntimeError(f"Unable to determine inserted id for table '{table.name}'")
+            return int(row[0])
+
     @staticmethod
     def _configure_sqlite_engine(engine: Engine) -> None:
         @event.listens_for(engine, "connect")
@@ -457,8 +478,23 @@ class ExperimentDatabase:
         if "is_moderation_comment" in post.c:
             values["is_moderation_comment"] = int(bool(is_moderation_comment))
         values = self._with_post_defaults(connection, self._with_generated_id(connection, "post", values), post)
-        result = connection.execute(post.insert().values(**values).returning(post.c.id))
-        comment_id = _raw_id(result.scalar_one())
+        result = connection.execute(post.insert().values(**values))
+        comment_id = _raw_id(
+            result.inserted_primary_key[0] if result.inserted_primary_key else None
+        )
+        if comment_id is None:
+            created = connection.execute(
+                select(post.c.id)
+                .where(post.c.user_id == user_id)
+                .where(post.c.round == round_id)
+                .where(post.c.comment_to == parent_post_id)
+                .where(post.c.tweet == text)
+                .order_by(post.c.id.desc())
+                .limit(1)
+            ).first()
+            if created is None:
+                raise RuntimeError("Failed to create comment")
+            comment_id = _raw_id(created[0])
         self._insert_mentions_for_text(
             connection,
             text=text,
@@ -532,8 +568,23 @@ class ExperimentDatabase:
             if optional_column in post.c and optional_column in original:
                 values[optional_column] = original[optional_column]
         values = self._with_post_defaults(connection, self._with_generated_id(connection, "post", values), post)
-        result = connection.execute(post.insert().values(**values).returning(post.c.id))
-        share_id = _raw_id(result.scalar_one())
+        result = connection.execute(post.insert().values(**values))
+        share_id = _raw_id(
+            result.inserted_primary_key[0] if result.inserted_primary_key else None
+        )
+        if share_id is None:
+            created = connection.execute(
+                select(post.c.id)
+                .where(post.c.user_id == user_id)
+                .where(post.c.round == round_id)
+                .where(post.c.shared_from == shared_post_id)
+                .where(post.c.tweet == str(text or original.get("tweet") or ""))
+                .order_by(post.c.id.desc())
+                .limit(1)
+            ).first()
+            if created is None:
+                raise RuntimeError("Failed to create share")
+            share_id = _raw_id(created[0])
         if "thread_id" in post.c:
             connection.execute(
                 post.update().where(post.c.id == share_id).values(thread_id=share_id)
@@ -572,8 +623,7 @@ class ExperimentDatabase:
         post = self.table("post")
         user_id = self.get_user_id(connection, username)
         result = connection.execute(
-            reactions.insert()
-            .values(
+            reactions.insert().values(
                 **self._with_generated_id(
                     connection,
                     "reactions",
@@ -585,9 +635,23 @@ class ExperimentDatabase:
                     },
                 )
             )
-            .returning(reactions.c.id)
         )
-        reaction_id = _raw_id(result.scalar_one())
+        reaction_id = _raw_id(
+            result.inserted_primary_key[0] if result.inserted_primary_key else None
+        )
+        if reaction_id is None:
+            created = connection.execute(
+                select(reactions.c.id)
+                .where(reactions.c.user_id == user_id)
+                .where(reactions.c.post_id == post_id)
+                .where(reactions.c.round == round_id)
+                .where(reactions.c.type == str(reaction_type))
+                .order_by(reactions.c.id.desc())
+                .limit(1)
+            ).first()
+            if created is None:
+                raise RuntimeError("Failed to create reaction")
+            reaction_id = _raw_id(created[0])
         if "reaction_count" in post.c:
             current = connection.execute(
                 select(post.c.reaction_count).where(post.c.id == post_id).limit(1)
@@ -1134,10 +1198,19 @@ class ExperimentDatabase:
                     "hashtags",
                     {"hashtag": str(tag).strip()},
                 )
-                result = connection.execute(
-                    hashtag_table.insert().values(**insert_values).returning(hashtag_table.c.id)
+                result = connection.execute(hashtag_table.insert().values(**insert_values))
+                hashtag_id = _raw_id(
+                    result.inserted_primary_key[0] if result.inserted_primary_key else None
                 )
-                hashtag_id = _raw_id(result.scalar_one())
+                if hashtag_id is None:
+                    created = connection.execute(
+                        select(hashtag_table.c.id)
+                        .where(hashtag_table.c.hashtag == str(tag).strip())
+                        .limit(1)
+                    ).first()
+                    if created is None:
+                        raise RuntimeError("Failed to create hashtag")
+                    hashtag_id = _raw_id(created[0])
                 existing_by_tag[normalized_key] = hashtag_id
 
             if str(hashtag_id) in existing_links:
@@ -1628,8 +1701,7 @@ class ExperimentDatabase:
     ) -> int:
         activity = self.table("propaganda_activity")
         result = connection.execute(
-            activity.insert()
-            .values(
+            activity.insert().values(
                 target_uid=target_uid,
                 propaganda_agent_uid=propaganda_agent_uid,
                 thread_id=thread_id,
@@ -1642,9 +1714,8 @@ class ExperimentDatabase:
                     topic_id,
                 ),
             )
-            .returning(activity.c.id)
         )
-        activity_id = int(result.scalar_one())
+        activity_id = int(result.inserted_primary_key[0])
         connection.commit()
         return activity_id
 
@@ -1780,8 +1851,7 @@ class ExperimentDatabase:
         moderated_agent_id = self.get_post_author_id(connection, moderated_post_id)
         moderator_id = self.get_user_id(connection, moderator_username)
         result = connection.execute(
-            actions.insert()
-            .values(
+            actions.insert().values(
                 moderated_post_id=moderated_post_id,
                 moderated_agent_id=moderated_agent_id,
                 moderator_agent_id=moderator_id,
@@ -1789,9 +1859,8 @@ class ExperimentDatabase:
                 round_id=round_id,
                 generated_comment_id=generated_comment_id,
             )
-            .returning(actions.c.id)
         )
-        action_id = int(result.scalar_one())
+        action_id = int(result.inserted_primary_key[0])
         self.increment_moderation_count(
             connection,
             moderated_agent_id=moderated_agent_id,
@@ -1827,11 +1896,26 @@ class ExperimentDatabase:
         else:
             raise RuntimeError("sys_messages table exposes neither duration nor to_round")
         result = connection.execute(
-            sys_messages.insert()
-            .values(**self._with_generated_id(connection, "sys_messages", values))
-            .returning(sys_messages.c.id)
+            sys_messages.insert().values(
+                **self._with_generated_id(connection, "sys_messages", values)
+            )
         )
-        message_id = _raw_id(result.scalar_one())
+        message_id = _raw_id(
+            result.inserted_primary_key[0] if result.inserted_primary_key else None
+        )
+        if message_id is None:
+            created = connection.execute(
+                select(sys_messages.c.id)
+                .where(sys_messages.c.type == message_type)
+                .where(sys_messages.c.to_uid == to_user_id)
+                .where(sys_messages.c.message == message)
+                .where(sys_messages.c.from_round == from_round)
+                .order_by(sys_messages.c.id.desc())
+                .limit(1)
+            ).first()
+            if created is None:
+                raise RuntimeError("Failed to create system message")
+            message_id = _raw_id(created[0])
         connection.commit()
         return message_id
 
