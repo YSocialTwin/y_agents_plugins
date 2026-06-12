@@ -44,7 +44,8 @@ def _build_db(path: Path) -> sqlite3.Connection:
             round INTEGER,
             shared_from INTEGER DEFAULT -1,
             moderated INTEGER DEFAULT 0,
-            is_moderation_comment INTEGER DEFAULT 0
+            is_moderation_comment INTEGER DEFAULT 0,
+            created_at DATETIME
         );
         CREATE TABLE reported (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -184,7 +185,8 @@ def _build_uuid_hpc_db(path: Path) -> sqlite3.Connection:
             round VARCHAR(36),
             shared_from VARCHAR(36),
             moderated INTEGER NOT NULL,
-            is_moderation_comment INTEGER NOT NULL
+            is_moderation_comment INTEGER NOT NULL,
+            created_at DATETIME
         );
         CREATE TABLE reported (
             id VARCHAR(36) PRIMARY KEY NOT NULL,
@@ -2101,6 +2103,52 @@ def test_executor_resolves_string_topic_labels_before_post_topic_insert(tmp_path
         text("SELECT topic_id FROM post_topics ORDER BY post_id DESC LIMIT 1")
     ).fetchone()
     assert inserted_topic == (2,)
+    sa_connection.close()
+    connection.close()
+
+
+def test_executor_persists_created_at_on_posts(tmp_path: Path) -> None:
+    db_path = tmp_path / "simulation.db"
+    connection = _build_db(db_path)
+    connection.execute("INSERT INTO user_mgmt (id, username, email, password, user_type, owner) VALUES (2, 'comic_1', 'comic_1@example.org', 'secret', 'comic_relief', 'experiment')")
+    connection.commit()
+
+    database = ExperimentDatabase(db_path)
+    sa_connection = database.connect()
+    executor = ActionExecutor(database)
+    agent = AgentSpec(
+        name="Comic One",
+        username="comic_1",
+        email="comic_1@example.org",
+        password="secret",
+        agent_type="comic_relief",
+        activity_profile="Always On",
+        daily_budget=24,
+    )
+    context = AgentContext(
+        client_id="comic-client",
+        current_round=SimulationRound(id=1, day=0, slot=0),
+        previous_round=None,
+        users=database.get_users(sa_connection),
+        recent_posts=(),
+        managed_agents=(agent,),
+        connection=sa_connection,
+    )
+    action = AgentAction(
+        agent_type="comic_relief",
+        action_type="CREATE_POST",
+        payload={
+            "text": "@comic_1 created_at should be set",
+        },
+    )
+
+    executor.execute(sa_connection, context=context, agent=agent, action=action)
+
+    created_at = sa_connection.execute(
+        text("SELECT created_at FROM post ORDER BY id DESC LIMIT 1")
+    ).fetchone()
+    assert created_at is not None
+    assert created_at[0] not in (None, "", "None")
     sa_connection.close()
     connection.close()
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import random
 import re
 import uuid
@@ -415,6 +416,8 @@ class ExperimentDatabase:
             "round": round_id,
             "shared_from": None,
         }
+        if "created_at" in post.c:
+            values["created_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
         values = self._with_post_defaults(connection, self._with_generated_id(connection, "post", values), post)
         result = connection.execute(post.insert().values(**values))
         post_id = _raw_id(
@@ -485,6 +488,8 @@ class ExperimentDatabase:
             "round": round_id,
             "shared_from": None,
         }
+        if "created_at" in post.c:
+            values["created_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
         if "is_moderation_comment" in post.c:
             values["is_moderation_comment"] = int(bool(is_moderation_comment))
         values = self._with_post_defaults(connection, self._with_generated_id(connection, "post", values), post)
@@ -574,6 +579,8 @@ class ExperimentDatabase:
             "round": round_id,
             "shared_from": shared_post_id,
         }
+        if "created_at" in post.c:
+            values["created_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
         for optional_column in ("news_id", "image_id", "image_post_id"):
             if optional_column in post.c and optional_column in original:
                 values[optional_column] = original[optional_column]
