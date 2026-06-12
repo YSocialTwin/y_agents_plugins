@@ -392,24 +392,15 @@ class ExperimentDatabase:
     ) -> Any:
         post = self.table("post")
         user_id = self.get_user_id(connection, username)
-        values = self._with_post_defaults(connection, self._with_generated_id(
-            connection,
-            "post",
-            {
-                "tweet": text,
-                "user_id": user_id,
-                "comment_to": -1,
-                "thread_id": None,
-                "round": round_id,
-                "shared_from": -1,
-            },
-        ), post)
-        result = connection.execute(
-            post.insert()
-            .values(**values)
-            .returning(post.c.id)
-        )
-        post_id = _raw_id(result.scalar_one())
+        values = {
+            "tweet": text,
+            "user_id": user_id,
+            "comment_to": -1,
+            "thread_id": None,
+            "round": round_id,
+            "shared_from": -1,
+        }
+        post_id = self._insert_with_fallback(connection, post, values)
         if "thread_id" in post.c:
             connection.execute(
                 post.update().where(post.c.id == post_id).values(thread_id=post_id)
