@@ -1,4 +1,8 @@
 {
+  "i18n": {
+    "domain": "y_agents_plugins",
+    "translations": "translations"
+  },
   "agent_types": [
     {
       "agent_type": "stress_attacker",
@@ -48,6 +52,7 @@
       "parameters": [
         {
           "name": "name",
+          "label": "Name",
           "type": "string",
           "required": true,
           "section": "core",
@@ -55,6 +60,7 @@
         },
         {
           "name": "activity_profile",
+          "label": "Activity Profile",
           "type": "string",
           "required": true,
           "section": "core",
@@ -62,6 +68,7 @@
         },
         {
           "name": "daily_budget",
+          "label": "Daily Budget",
           "type": "number",
           "required": true,
           "default": 12,
@@ -72,6 +79,7 @@
       "client_parameters": [
         {
           "name": "target_filters",
+          "label": "Target Filters",
           "type": "target_filters",
           "required": false,
           "default": [],
@@ -80,6 +88,7 @@
         },
         {
           "name": "burst_rounds",
+          "label": "Burst Rounds",
           "type": "integer",
           "required": true,
           "default": 4,
@@ -88,6 +97,7 @@
         },
         {
           "name": "cooldown_rounds",
+          "label": "Cooldown Rounds",
           "type": "integer",
           "required": true,
           "default": 8,
@@ -96,6 +106,7 @@
         },
         {
           "name": "source_count",
+          "label": "Source Count",
           "type": "integer",
           "required": true,
           "default": 3,
@@ -104,6 +115,7 @@
         },
         {
           "name": "post_lookback_rounds",
+          "label": "Post Lookback Rounds",
           "type": "integer",
           "required": true,
           "default": 24,
@@ -112,6 +124,7 @@
         },
         {
           "name": "negative_reactions_enabled",
+          "label": "Negative Reactions Enabled",
           "type": "enum[enabled, disabled]",
           "required": true,
           "default": "enabled",
@@ -120,6 +133,7 @@
         },
         {
           "name": "reaction_burst_volume",
+          "label": "Reaction Burst Volume",
           "type": "integer",
           "required": false,
           "default": 3,
@@ -128,6 +142,7 @@
         },
         {
           "name": "critical_comment_enabled",
+          "label": "Critical Comment Enabled",
           "type": "enum[enabled, disabled]",
           "required": true,
           "default": "enabled",
@@ -136,6 +151,7 @@
         },
         {
           "name": "critical_comment_mode",
+          "label": "Critical Comment Mode",
           "type": "enum[synthetic, llm]",
           "required": true,
           "default": "synthetic",
@@ -144,6 +160,7 @@
         },
         {
           "name": "critical_comment_text",
+          "label": "Critical Comment Text",
           "type": "multiline_string",
           "required": false,
           "default": "Shout up! That's completely nonsense! You're embarrassing yourself, y'a know!?",
@@ -152,6 +169,7 @@
         },
         {
           "name": "report_burst_enabled",
+          "label": "Report Burst Enabled",
           "type": "enum[enabled, disabled]",
           "required": true,
           "default": "enabled",
@@ -160,6 +178,7 @@
         },
         {
           "name": "report_burst_volume",
+          "label": "Report Burst Volume",
           "type": "integer",
           "required": false,
           "default": 3,
@@ -210,6 +229,7 @@
       "parameters": [
         {
           "name": "name",
+          "label": "Name",
           "type": "string",
           "required": true,
           "section": "core",
@@ -217,6 +237,7 @@
         },
         {
           "name": "activity_profile",
+          "label": "Activity Profile",
           "type": "string",
           "required": true,
           "section": "core",
@@ -224,6 +245,7 @@
         },
         {
           "name": "daily_budget",
+          "label": "Daily Budget",
           "type": "number",
           "required": true,
           "default": 24,
@@ -232,6 +254,7 @@
         },
         {
           "name": "humor_styles",
+          "label": "Humor Styles",
           "type": "enum_multi[dad_jokes, nerdy, wordplay, dry_wit, absurdist, wholesome, observational, pop_culture, office_humor, science_geek, fantasy_gaming, history_gags, sports_banter, food_puns, travel_gags, awkward_social]",
           "required": true,
           "default": [
@@ -244,6 +267,7 @@
       "client_parameters": [
         {
           "name": "delivery_mode",
+          "label": "Delivery Mode",
           "type": "enum[alternate, post_only, comment_only]",
           "required": true,
           "default": "alternate",
@@ -252,6 +276,7 @@
         },
         {
           "name": "post_lookback_rounds",
+          "label": "Post Lookback Rounds",
           "type": "integer",
           "required": true,
           "default": 24,
@@ -260,6 +285,7 @@
         },
         {
           "name": "opening_llm_prompt_override",
+          "label": "Opening LLM Prompt Override",
           "type": "multiline_string",
           "required": false,
           "default": "",
@@ -268,6 +294,7 @@
         },
         {
           "name": "reply_llm_prompt_override",
+          "label": "Reply LLM Prompt Override",
           "type": "multiline_string",
           "required": false,
           "default": "",
@@ -291,6 +318,7 @@
       "parameters": [
         {
           "name": "name",
+          "label": "Name",
           "type": "string",
           "required": true,
           "section": "core",
@@ -298,6 +326,7 @@
         },
         {
           "name": "activity_profile",
+          "label": "Activity Profile",
           "type": "string",
           "required": true,
           "section": "core",
@@ -305,6 +334,7 @@
         },
         {
           "name": "daily_budget",
+          "label": "Daily Budget",
           "type": "number",
           "required": true,
           "default": 24,
@@ -313,6 +343,7 @@
         },
         {
           "name": "post_text",
+          "label": "Post Text",
           "type": "string",
           "required": false,
           "default": "HELLO WORLD",
@@ -357,6 +388,7 @@
       "parameters": [
         {
           "name": "name",
+          "label": "Name",
           "type": "string",
           "required": true,
           "section": "core",
@@ -364,6 +396,7 @@
         },
         {
           "name": "activity_profile",
+          "label": "Activity Profile",
           "type": "string",
           "required": true,
           "section": "core",
@@ -371,6 +404,7 @@
         },
         {
           "name": "daily_budget",
+          "label": "Daily Budget",
           "type": "number",
           "required": true,
           "default": 24,
@@ -379,6 +413,7 @@
         },
         {
           "name": "toxicity_threshold",
+          "label": "Toxicity Threshold",
           "type": "float",
           "required": true,
           "default": 0.8,
@@ -387,6 +422,7 @@
         },
         {
           "name": "moderation_time_span",
+          "label": "Moderation Time Span",
           "type": "integer",
           "required": true,
           "default": 24,
@@ -395,6 +431,7 @@
         },
         {
           "name": "moderation_action_type",
+          "label": "Moderation Action Type",
           "type": "enum[one-fits-all, personalized]",
           "required": true,
           "default": "one-fits-all",
@@ -403,6 +440,7 @@
         },
         {
           "name": "standard_message",
+          "label": "Standard Message",
           "type": "multiline_string",
           "required": false,
           "default": "Your recent post violated the platform moderation policy. Please adjust your behavior.",
@@ -415,6 +453,7 @@
         },
         {
           "name": "candidate_window_rounds",
+          "label": "Candidate Window Rounds",
           "type": "integer",
           "required": false,
           "default": 1,
@@ -423,6 +462,7 @@
         },
         {
           "name": "shadow_ban_enabled",
+          "label": "Shadow Ban Enabled",
           "type": "enum[disabled, enabled]",
           "required": false,
           "default": "disabled",
@@ -431,6 +471,7 @@
         },
         {
           "name": "shadow_ban_infraction_window_rounds",
+          "label": "Shadow Ban Infraction Window Rounds",
           "type": "integer",
           "required": false,
           "default": 24,
@@ -443,6 +484,7 @@
         },
         {
           "name": "shadow_ban_n_infraction",
+          "label": "Shadow Ban N Infraction",
           "type": "integer",
           "required": false,
           "default": 3,
@@ -455,6 +497,7 @@
         },
         {
           "name": "shadow_ban_duration_rounds",
+          "label": "Shadow Ban Duration Rounds",
           "type": "integer",
           "required": false,
           "default": 24,
@@ -467,6 +510,7 @@
         },
         {
           "name": "ban_enabled",
+          "label": "Ban Enabled",
           "type": "enum[disabled, enabled]",
           "required": false,
           "default": "disabled",
@@ -475,6 +519,7 @@
         },
         {
           "name": "ban_infraction_window_rounds",
+          "label": "Ban Infraction Window Rounds",
           "type": "integer",
           "required": false,
           "default": 24,
@@ -487,6 +532,7 @@
         },
         {
           "name": "ban_n_infraction",
+          "label": "Ban N Infraction",
           "type": "integer",
           "required": false,
           "default": 3,
@@ -547,6 +593,7 @@
       "parameters": [
         {
           "name": "name",
+          "label": "Name",
           "type": "string",
           "required": true,
           "section": "core",
@@ -554,6 +601,7 @@
         },
         {
           "name": "activity_profile",
+          "label": "Activity Profile",
           "type": "string",
           "required": true,
           "section": "core",
@@ -561,6 +609,7 @@
         },
         {
           "name": "daily_budget",
+          "label": "Daily Budget",
           "type": "number",
           "required": true,
           "default": 24,
@@ -571,6 +620,7 @@
       "client_parameters": [
         {
           "name": "propaganda_campaigns",
+          "label": "Propaganda Campaigns",
           "type": "topic_targets",
           "required": true,
           "section": "campaign",
@@ -585,6 +635,7 @@
         },
         {
           "name": "max_concurrent_targets",
+          "label": "Max Concurrent Targets",
           "type": "integer",
           "required": true,
           "default": 1,
@@ -593,6 +644,7 @@
         },
         {
           "name": "epsilon",
+          "label": "Epsilon",
           "type": "float",
           "required": true,
           "default": 0.05,
@@ -601,6 +653,7 @@
         },
         {
           "name": "opening_llm_prompt_override",
+          "label": "Opening LLM Prompt Override",
           "type": "multiline_string",
           "required": false,
           "default": "",
@@ -609,6 +662,7 @@
         },
         {
           "name": "max_interaction_rounds",
+          "label": "Max Interaction Rounds",
           "type": "integer",
           "required": true,
           "default": 4,
@@ -617,6 +671,7 @@
         },
         {
           "name": "reply_llm_prompt_override",
+          "label": "Reply LLM Prompt Override",
           "type": "multiline_string",
           "required": false,
           "default": "",
@@ -663,6 +718,7 @@
       "parameters": [
         {
           "name": "name",
+          "label": "Name",
           "type": "string",
           "required": true,
           "section": "core",
@@ -670,6 +726,7 @@
         },
         {
           "name": "activity_profile",
+          "label": "Activity Profile",
           "type": "string",
           "required": true,
           "section": "core",
@@ -677,6 +734,7 @@
         },
         {
           "name": "daily_budget",
+          "label": "Daily Budget",
           "type": "number",
           "required": true,
           "default": 48,
@@ -685,6 +743,7 @@
         },
         {
           "name": "puppet_count",
+          "label": "Puppet Count",
           "type": "integer",
           "required": true,
           "default": 3,
@@ -693,6 +752,7 @@
         },
         {
           "name": "post_budget_percentage",
+          "label": "Post Budget Percentage",
           "type": "float",
           "required": true,
           "default": 50,
@@ -701,6 +761,7 @@
         },
         {
           "name": "support_budget_percentage",
+          "label": "Support Budget Percentage",
           "type": "float",
           "required": true,
           "default": 25,
@@ -709,6 +770,7 @@
         },
         {
           "name": "network_budget_percentage",
+          "label": "Network Budget Percentage",
           "type": "float",
           "required": true,
           "default": 25,
@@ -717,6 +779,7 @@
         },
         {
           "name": "boost_lookback_hours",
+          "label": "Boost Lookback Hours",
           "type": "integer",
           "required": true,
           "default": 12,
@@ -727,6 +790,7 @@
       "client_parameters": [
         {
           "name": "mop_campaigns",
+          "label": "MoP Campaigns",
           "type": "mop_targets",
           "required": true,
           "section": "campaign",
