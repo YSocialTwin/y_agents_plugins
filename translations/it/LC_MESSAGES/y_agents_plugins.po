@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: y_agents_plugins VERSION\n"
 "Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
-"POT-Creation-Date: 2026-10-17 09:17+0000\n"
+"POT-Creation-Date: 2026-10-17 09:20+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language: it\n"
@@ -606,11 +606,6 @@ msgid "Personalized Moderation System Prompt"
 msgstr "Prompt di sistema della moderazione personalizzata"
 
 #. manifest string
-#: meta/info.json/description
-msgid "Plugin-defined ad hoc agent families for YSocial experiments."
-msgstr "Famiglie di agenti ad hoc definite da plugin per gli esperimenti YSocial."
-
-#. manifest string
 #: meta/registry.json/agent_types[5]/parameters[4]/label
 msgid "Post Budget Percentage"
 msgstr "Percentuale di budget per i post"
@@ -660,6 +655,11 @@ msgstr "Numero di fantocci"
 #: meta/registry.json/agent_types[0]/client_parameters[6]/label
 msgid "Reaction Burst Volume"
 msgstr "Volume delle raffiche di reazioni"
+
+#. manifest string
+#: meta/info.json/description
+msgid "Ready-made special-purpose agents (moderator, propaganda, comic relief, stress testing and more) to add to an experiment."
+msgstr "Agenti speciali già pronti (moderatore, propaganda, comicità, test di stress e altri) da aggiungere a un esperimento."
 
 #. manifest string
 #: meta/registry.json/agent_types[1]/client_parameters[3]/label
@@ -816,4 +816,7 @@ msgstr "Prende di mira agenti normali sugli argomenti di dinamica delle opinioni
 #: meta/registry.json/agent_types[3]/parameters[3]/label
 msgid "Toxicity Threshold"
 msgstr "Soglia di tossicità"
+
+#~ msgid "Plugin-defined ad hoc agent families for YSocial experiments."
+#~ msgstr "Famiglie di agenti ad hoc definite da plugin per gli esperimenti YSocial."
 
