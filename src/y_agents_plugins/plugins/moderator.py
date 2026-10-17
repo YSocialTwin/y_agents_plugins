@@ -6,6 +6,7 @@ from sqlalchemy import Column, Integer, MetaData, String, Table, Text, text
 
 from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec, PostRecord
 from y_agents_plugins.plugins.base import BaseAgentPlugin
+from y_agents_plugins import prompt_store
 
 
 class ModeratorAgent(BaseAgentPlugin):
@@ -174,11 +175,11 @@ class ModeratorAgent(BaseAgentPlugin):
         return [
             {
                 "strategy_key": "one-fits-all",
-                "description": "Write a standard moderation notice into sys_messages and mark the post as moderated.",
+                "description": prompt_store.get("moderator__moderation_strategies__1"),
             },
             {
                 "strategy_key": "personalized",
-                "description": "Generate a user-tailored moderation notice with the LangChain LLM, write it into sys_messages, and mark the post as moderated.",
+                "description": prompt_store.get("moderator__moderation_strategies__2"),
             }
         ]
     
@@ -359,10 +360,7 @@ class ModeratorAgent(BaseAgentPlugin):
         if self.llm is None or not self.llm.is_available:
             raise ValueError("moderation_action_type 'personalized' requires a configured LangChain LLM model")
         system_prompt = (
-            "You are a moderation assistant for a YSocial simulation. "
-            "Write one short personalized moderation notice for the offending user. "
-            "Be firm, concise, and mention the behavior change expected. "
-            "Do not add any heading, salutation, recipient line, timeframe sentence, or signature. "
+            prompt_store.get("moderator__build_system_message__1")
         )
         if shadow_ban_enabled:
             system_prompt += (
@@ -377,15 +375,17 @@ class ModeratorAgent(BaseAgentPlugin):
         if override_prompt:
             system_prompt = override_prompt
         user_prompt = (
-            f"Moderator: {moderator.name}\n"
-            f"Moderated post id: {post.id}\n"
-            f"Post text: {post.text}\n"
-            f"Target user profile: {target_user.profile}\n"
-            f"Current shadow-ban infraction count: {shadow_ban_infraction_count if shadow_ban_enabled else 'not applicable'}\n"
-            f"Current permanent-ban infraction count: {ban_infraction_count if ban_enabled else 'not applicable'}\n"
-            f"Escalation notice: {escalation_notice or 'No shadow-ban escalation is configured.'}\n"
-            f"Ban notice: {ban_notice or 'No permanent-ban escalation is configured.'}\n"
-            "Return only the moderation notice body."
+            prompt_store.prompt(
+                "moderator__build_system_message__2",
+                name=moderator.name,
+                id=post.id,
+                text=post.text,
+                profile=target_user.profile,
+                v5=shadow_ban_infraction_count if shadow_ban_enabled else 'not applicable',
+                v6=ban_infraction_count if ban_enabled else 'not applicable',
+                v7=escalation_notice or 'No shadow-ban escalation is configured.',
+                v8=ban_notice or 'No permanent-ban escalation is configured.',
+            )
         )
         return self._clean_personalized_message(
             self.llm.invoke_text(system_prompt=system_prompt, user_prompt=user_prompt)

@@ -10,6 +10,7 @@ from sqlalchemy import Boolean, Column, Integer, MetaData, Table, Text, select
 
 from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec, PostRecord, UserRecord
 from y_agents_plugins.plugins.base import BaseAgentPlugin
+from y_agents_plugins import prompt_store
 
 
 class MasterOfPuppetsAgent(BaseAgentPlugin):
@@ -17,8 +18,7 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
 
     agent_type = "master_of_puppets"
     _SAFETY_DIRECTIVE = (
-        "Keep every message non-toxic, non-threatening, non-harassing, and socially plausible. "
-        "Do not use insults, hate, slurs, threats, or overt spam language."
+        prompt_store.get("master_of_puppets__module__1")
     )
 
     def setup_database(self, database, connection) -> None:
@@ -739,18 +739,22 @@ class MasterOfPuppetsAgent(BaseAgentPlugin):
                 f"There is room for a more {target_stance.lower()} conversation about it."
             ).strip()
         system_prompt = (
-            "You are the strategic planner behind a coordinated but human-like social campaign. "
-            f"{self._SAFETY_DIRECTIVE} Write a short, plausible microblogging post."
+            prompt_store.prompt(
+                "master_of_puppets__build_post_text__1",
+                _SAFETY_DIRECTIVE=self._SAFETY_DIRECTIVE,
+            )
         )
         override_prompt = str(self._resolved_settings(agent).get("llm_prompt_override") or "").strip()
         if override_prompt:
             system_prompt = override_prompt
         user_prompt = (
-            f"Campaign topic: {campaign['topic_name']}\n"
-            f"Desired stance: {target_stance}\n"
-            f"Puppet id: {puppet_id}\n"
-            f"Target user: {target_user.username if target_user else 'none'}\n"
-            "Output one short post, no explanations."
+            prompt_store.prompt(
+                "master_of_puppets__build_post_text__2",
+                topic_name=campaign['topic_name'],
+                target_stance=target_stance,
+                puppet_id=puppet_id,
+                v4=target_user.username if target_user else 'none',
+            )
         )
         text = self.llm.invoke_text(system_prompt=system_prompt, user_prompt=user_prompt).strip()
         return self._normalize_mention(text, target_user.username if target_user else None)
