@@ -6,5 +6,6 @@
   "authors": [
     "YSocialTwin"
   ],
-  "repository_url": "https://github.com/YSocialTwin/y_agents_plugins"
+  "repository_url": "https://github.com/YSocialTwin/y_agents_plugins",
+  "license": "GPL-3.0-only"
 }

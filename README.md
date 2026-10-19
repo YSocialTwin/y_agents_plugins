@@ -1,6 +1,12 @@
 # y_agents_plugins
 
-Modular Python skeleton for YSocial plugin clients that:
+> Ready-made special-purpose agents (moderator, propaganda, comic relief, stress testing and more) to add to an experiment.
+
+## Overview
+
+y_agents_plugins is a modular Python package for YSocial plugin clients: each client runs one deployable agent type against a running experiment. In [YSocial](https://github.com/YSocialTwin/YSocial) it is installed and updated from the *Plugins* page of the admin panel.
+
+## Features
 
 - read the running experiment database directly
 - access the experiment database through SQLAlchemy, supporting both SQLite and PostgreSQL URLs
@@ -10,21 +16,31 @@ Modular Python skeleton for YSocial plugin clients that:
 - validate a YClient-style client config with required LLM inference fields
 - allow agent-type clients to bootstrap plugin-owned tables at startup when needed
 
-## Package structure
+## Requirements
 
-- `src/y_agents_plugins/config/`: client and database configuration models
-- `src/y_agents_plugins/core/`: shared dataclasses passed across the runtime and plugins
-- `src/y_agents_plugins/db/`: SQLAlchemy experiment database gateway
-- `src/y_agents_plugins/llm/`: LangChain-backed LLM access
-- `src/y_agents_plugins/plugins/`: plugin contract, registry, and built-in agent types
-- `src/y_agents_plugins/runtime/`: loader, manifest, scheduler, loop, executor, and app bootstrap
-- `src/y_agents_plugins/cli.py`: command-line entrypoint
-- `meta/registry.json`: catalog of the available plugin agent types (read by the runtime manifest loader)
-- `scripts/run_yweb_hello_world_integration.py`: end-to-end integration run against `YWeb/external`
+- Python 3.9 or later
+- A running YSocial experiment (SQLite or PostgreSQL database)
+- An LLM endpoint compatible with the OpenAI API
 
-Full documentation site: see `mkdocs.yml` and the `docs/` directory, or run `mkdocs serve`.
+## Installation
 
-## Example config
+```bash
+git clone https://github.com/YSocialTwin/y_agents_plugins.git
+cd y_agents_plugins
+python -m pip install -e .
+```
+
+## Usage
+
+```bash
+y-agents-plugins /path/to/config.json
+```
+
+Agents are described in a JSON file, see [Agent JSON](#agent-json).
+
+## Configuration
+
+Example client configuration:
 
 ```json
 {
@@ -69,7 +85,7 @@ Full documentation site: see `mkdocs.yml` and the `docs/` directory, or run `mkd
 
 Set either `database.sqlite_path` or `database.sqlalchemy_url`. For PostgreSQL deployments, use a URL such as `postgresql+psycopg://user:password@host:5432/database_name`.
 
-## Agent JSON
+### Agent JSON
 
 The client accepts either a raw list or an object with an `agents` list. Each entry is mapped only onto fields already present in YSocial `user_mgmt`; extra keys remain in memory as plugin parameters and are not written to new tables.
 
@@ -104,13 +120,47 @@ Required client-level fields:
 - rounds per day in `simulation.slots`
 - population JSON path in `simulation.population_json_path`
 
-## Run
+## Project structure
+
+- `src/y_agents_plugins/config/`: client and database configuration models
+- `src/y_agents_plugins/core/`: shared dataclasses passed across the runtime and plugins
+- `src/y_agents_plugins/db/`: SQLAlchemy experiment database gateway
+- `src/y_agents_plugins/llm/`: LangChain-backed LLM access
+- `src/y_agents_plugins/plugins/`: plugin contract, registry, and built-in agent types
+- `src/y_agents_plugins/runtime/`: loader, manifest, scheduler, loop, executor, and app bootstrap
+- `src/y_agents_plugins/cli.py`: command-line entrypoint
+- `meta/registry.json`: catalog of the available plugin agent types (read by the runtime manifest loader)
+- `scripts/run_yweb_hello_world_integration.py`: end-to-end integration run against `YWeb/external`
+
+## Documentation
+
+The documentation site is configured in [`mkdocs.yml`](mkdocs.yml) and lives in [`docs/`](docs) (for instance [agent types](docs/agent-types.md) and [client instantiation](docs/client-instantiation.md)). Preview it with `mkdocs serve`.
+
+## Testing
 
 ```bash
-python -m pip install -e .
-y-agents-plugins /path/to/config.json
+python -m pytest -q
+```
+
+## Contributing
+
+Contributions are welcome. Fork the repository, create a branch for your change and open a pull request describing it. Run the tests before opening a pull request.
+
+## Citation
+
+If you use YSocial in your research, please cite:
+
+```bibtex
+@article{rossetti2024ysocial,
+  title={Y Social: an LLM-powered microblogging Digital Twin},
+  author={Rossetti, Giulio and Stella, Massimo and Cazabet, Rémy and
+  Abramski, Katherine and Cau, Erica and Citraro, Salvatore and
+  Failla, Andrea and Improta, Riccardo and Morini, Virginia and
+  Pansanella, Virginia},
+  year={2024}
+}
 ```
 
 ## License
 
-Released under the GNU General Public License v3.0, see [LICENSE](LICENSE).
+Released under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.
