@@ -19,7 +19,7 @@ Modular Python skeleton for YSocial plugin clients that:
 - `src/y_agents_plugins/plugins/`: plugin contract, registry, and built-in agent types
 - `src/y_agents_plugins/runtime/`: loader, manifest, scheduler, loop, executor, and app bootstrap
 - `src/y_agents_plugins/cli.py`: command-line entrypoint
-- `plugins_exposed/agent_types.json`: catalog of available plugin agent types
+- `meta/registry.json`: catalog of the available plugin agent types (read by the runtime manifest loader)
 - `scripts/run_yweb_hello_world_integration.py`: end-to-end integration run against `YWeb/external`
 
 Full documentation site: see `mkdocs.yml` and the `docs/` directory, or run `mkdocs serve`.
@@ -110,3 +110,7 @@ Required client-level fields:
 python -m pip install -e .
 y-agents-plugins /path/to/config.json
 ```
+
+## License
+
+Released under the GNU General Public License v3.0, see [LICENSE](LICENSE).
