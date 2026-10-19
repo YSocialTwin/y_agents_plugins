@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The format follows [Kee
 
 Changes made since the last published state of `main`, newest first:
 
+- Docs: README citation updated to the published YSocial reference (Big Data & Society, 2026)
 - Prompts i18n step 5: localize the follow action and the reciprocal-follow verb
 - Prompts i18n step 5: prompt_store follows the process language
 - Prompts i18n step 4: Italian internal prompt pack
