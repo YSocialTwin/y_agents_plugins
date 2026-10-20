@@ -6,6 +6,7 @@ from typing import Any
 
 from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec, PostRecord, UserRecord
 from y_agents_plugins.plugins.base import BaseAgentPlugin
+from y_agents_plugins import prompt_store
 
 
 class ComicReliefAgent(BaseAgentPlugin):
@@ -13,17 +14,10 @@ class ComicReliefAgent(BaseAgentPlugin):
 
     agent_type = "comic_relief"
     _POST_SYSTEM_PROMPT = (
-        "You are a comic relief agent in a social simulation. "
-        "Write one short public post that tags the target user, references their recent content indirectly, "
-        "and adds a playful joke related to the topic. "
-        "Keep the humor light, clever, and non-abusive. Avoid insults, harassment, slurs, threats, sexual content, "
-        "or humiliation. The goal is to ease tension, not escalate it."
+        prompt_store.get("comic_relief__module__1")
     )
     _COMMENT_SYSTEM_PROMPT = (
-        "You are a comic relief agent in a social simulation. "
-        "Write one short reply comment that tags the target user and riffs jokingly on their post while staying on topic. "
-        "Keep the humor light, clever, and non-abusive. Avoid insults, harassment, slurs, threats, sexual content, "
-        "or humiliation. The goal is to ease tension, not escalate it."
+        prompt_store.get("comic_relief__module__2")
     )
     _DEFAULT_STYLES = ["dad_jokes"]
     def on_tick(self, context: AgentContext, agent: AgentSpec) -> list[AgentAction]:
@@ -132,13 +126,14 @@ class ComicReliefAgent(BaseAgentPlugin):
             or self._POST_SYSTEM_PROMPT
         ).strip()
         user_prompt = (
-            f"Comic relief styles: {', '.join(self._humor_styles(agent))}\n"
-            f"Target user profile: {target_user.profile}\n"
-            f"Selected simulation topic: {topic_context['topic_name'] if topic_context else 'unknown'}\n"
-            f"Original post: {target_post.text}\n"
-            f"Write one short humorous post that starts with '@{target_user.username} '. "
-            "Make it clearly related to the original post and the selected simulation topic, playful, and safe for a public feed. "
-            "Return only the post text."
+            prompt_store.prompt(
+                "comic_relief__build_post_text__1",
+                v1=', '.join(self._humor_styles(agent)),
+                profile=target_user.profile,
+                v3=topic_context['topic_name'] if topic_context else 'unknown',
+                text=target_post.text,
+                username=target_user.username,
+            )
         )
         text = self.llm.invoke_text(system_prompt=system_prompt, user_prompt=user_prompt).strip()
         return self._normalize_target_tag(text, target_user.username)
@@ -160,12 +155,13 @@ class ComicReliefAgent(BaseAgentPlugin):
             or self._COMMENT_SYSTEM_PROMPT
         ).strip()
         user_prompt = (
-            f"Comic relief styles: {', '.join(self._humor_styles(agent))}\n"
-            f"Target user profile: {target_user.profile}\n"
-            f"Original post: {target_post.text}\n"
-            f"Write one short humorous reply that starts with '@{target_user.username} '. "
-            "Keep it related to the original post, playful, and safe for a public thread. "
-            "Return only the reply text."
+            prompt_store.prompt(
+                "comic_relief__build_comment_text__1",
+                v1=', '.join(self._humor_styles(agent)),
+                profile=target_user.profile,
+                text=target_post.text,
+                username=target_user.username,
+            )
         )
         text = self.llm.invoke_text(system_prompt=system_prompt, user_prompt=user_prompt).strip()
         return self._normalize_target_tag(text, target_user.username)

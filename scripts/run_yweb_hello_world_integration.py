@@ -13,7 +13,7 @@ import requests
 
 
 ROOT = Path(__file__).resolve().parents[1]
-YWEB_ROOT = Path("/Users/rossetti/PycharmProjects/YWeb")
+YWEB_ROOT = Path(os.environ.get("YWEB_ROOT") or ROOT.parents[1])
 SERVER_ROOT = YWEB_ROOT / "external" / "YServer"
 CLIENT_ROOT = YWEB_ROOT / "external" / "YClient"
 

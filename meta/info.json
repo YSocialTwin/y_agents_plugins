@@ -2,9 +2,10 @@
   "plugin_name": "y_agents_plugins",
   "category": "Agent Extensions",
   "group": "Agent Plugins",
-  "description": "Plugin-defined ad hoc agent families for YSocial experiments.",
+  "description": "Ready-made special-purpose agents (moderator, propaganda, comic relief, stress testing and more) to add to an experiment.",
   "authors": [
     "YSocialTwin"
   ],
-  "repository_url": "https://github.com/YSocialTwin/y_agents_plugins"
+  "repository_url": "https://github.com/YSocialTwin/y_agents_plugins",
+  "license": "GPL-3.0-only"
 }

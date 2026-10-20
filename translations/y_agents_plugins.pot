@@ -1,0 +1,879 @@
+# Translations template for y_agents_plugins.
+# Copyright (C) 2026 ORGANIZATION
+# This file is distributed under the same license as the y_agents_plugins project.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: y_agents_plugins VERSION\n"
+"Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
+"POT-Creation-Date: 2026-10-17 09:20+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/parameters[1]/label
+#: meta/registry.json/agent_types[1]/parameters[1]/label
+#: meta/registry.json/agent_types[2]/parameters[1]/label
+#: meta/registry.json/agent_types[3]/parameters[1]/label
+#: meta/registry.json/agent_types[4]/parameters[1]/label
+#: meta/registry.json/agent_types[5]/parameters[1]/label
+msgid "Activity Profile"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[0]/description
+msgid ""
+"Add one or more demographic filters. The builder exposes known population features and, when "
+"possible, their existing values."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/description
+msgid ""
+"Adds light humor to the simulation by posting playful jokes and comments related to recent user "
+"content, always tagging the target user."
+msgstr ""
+
+#. manifest string
+#: meta/info.json/category
+msgid "Agent Extensions"
+msgstr ""
+
+#. manifest string
+#: meta/info.json/group
+msgid "Agent Plugins"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[7]/description
+msgid "Apply synthetic critical-comment stress events against the selected target."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[5]/description
+msgid "Apply synthetic dislike bursts against the selected target."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[12]/label
+msgid "Ban Enabled"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[13]/label
+msgid "Ban Infraction Window Rounds"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[14]/label
+msgid "Ban N Infraction"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameter_sections[0]/description
+msgid "Base agent identity and orchestration settings."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/parameter_sections[0]/description
+#: meta/registry.json/agent_types[1]/parameter_sections[0]/description
+#: meta/registry.json/agent_types[2]/parameter_sections[0]/description
+#: meta/registry.json/agent_types[3]/parameter_sections[0]/description
+#: meta/registry.json/agent_types[4]/parameter_sections[0]/description
+msgid "Base agent identity and scheduling settings."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[6]/description
+msgid ""
+"Base standard moderation notice used for the one-fits-all strategy. Escalation notices are still "
+"appended automatically when shadow bans or permanent bans are configured."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameters[7]/label
+msgid "Boost Lookback Hours"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[1]/label
+msgid "Burst Rounds"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameter_sections[1]/description
+msgid "Burst duration, cooldown, and synthetic source intensity."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameter_sections[0]/label
+msgid "Campaign Targets"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[7]/label
+msgid "Candidate Window Rounds"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/parameter_sections[1]/description
+msgid "Choose one or more comedy styles for this specific agent."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[8]/description
+msgid ""
+"Choose whether critical comment pressure is injected synthetically or written as a real LLM-"
+"generated reply."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/client_parameters[0]/description
+msgid ""
+"Choose whether the agent alternates between tagged posts and comments, or only uses one delivery "
+"mode."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/display_name
+msgid "Comic Relief Agent"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/prompt_templates[1]/title
+msgid "Comic Relief Comment System Prompt"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/prompt_templates[0]/title
+msgid "Comic Relief Post System Prompt"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/client_parameter_sections[0]/description
+msgid "Control how the agent alternates between tagged posts and reply comments on recent content."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameter_sections[1]/label
+msgid "Conversation Policy"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[2]/label
+msgid "Cooldown Rounds"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/description
+msgid ""
+"Coordinates a fleet of rule-based puppet accounts, plans their daily posting, follow, and "
+"boosting actions, and steers the conversation toward configured topics and optional opinion "
+"targets."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/parameter_sections[0]/label
+#: meta/registry.json/agent_types[1]/parameter_sections[0]/label
+#: meta/registry.json/agent_types[2]/parameter_sections[0]/label
+#: meta/registry.json/agent_types[3]/parameter_sections[0]/label
+#: meta/registry.json/agent_types[4]/parameter_sections[0]/label
+#: meta/registry.json/agent_types[5]/parameter_sections[0]/label
+msgid "Core Configuration"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[7]/label
+msgid "Critical Comment Enabled"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[8]/label
+msgid "Critical Comment Mode"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameter_sections[3]/label
+msgid "Critical Comment Pressure"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/prompt_templates[0]/title
+msgid "Critical Comment System Prompt"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[9]/label
+msgid "Critical Comment Text"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/parameters[2]/label
+#: meta/registry.json/agent_types[1]/parameters[2]/label
+#: meta/registry.json/agent_types[2]/parameters[2]/label
+#: meta/registry.json/agent_types[3]/parameters[2]/label
+#: meta/registry.json/agent_types[4]/parameters[2]/label
+#: meta/registry.json/agent_types[5]/parameters[2]/label
+msgid "Daily Budget"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameter_sections[1]/label
+msgid "Daily Planning"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[2]/parameters[2]/description
+#: meta/registry.json/agent_types[3]/parameters[2]/description
+msgid "Daily budget field persisted in the existing experiment population record."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/client_parameters[0]/description
+msgid ""
+"Define one or more agenda items by choosing an experiment topic and, optionally, the opinion "
+"category the network should promote."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameters[0]/description
+msgid ""
+"Define one or more persuasion campaigns by choosing an experiment topic, the desired target "
+"opinion category, and optional demographic filters for the users to target."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/client_parameter_sections[0]/description
+msgid ""
+"Define the topics the puppet network should push and, optionally, the opinion stance each "
+"campaign should reinforce."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/client_parameters[0]/label
+msgid "Delivery Mode"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameter_sections[0]/description
+msgid "Demographic filters used to pick one viable target from the experiment population."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameters[2]/label
+msgid "Epsilon"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameter_sections[0]/description
+msgid "Experiment-specific topics and target opinion values to steer."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[2]/display_name
+msgid "Hello World Agent"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[4]/description
+msgid "How far back to search for target-authored posts when choosing a post to stress or report."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/client_parameters[1]/description
+msgid "How far back to search recent content when selecting a target post to riff on."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameters[7]/description
+msgid "How many past simulated hours a puppet scans for sibling posts to like or reshare."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameter_sections[1]/description
+msgid ""
+"How many puppets to maintain and how the total daily budget is split across posting, support, and"
+" network expansion."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameter_sections[2]/description
+msgid "How sibling puppets amplify each other after posts go live."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/parameters[0]/description
+#: meta/registry.json/agent_types[1]/parameters[0]/description
+#: meta/registry.json/agent_types[2]/parameters[0]/description
+#: meta/registry.json/agent_types[3]/parameters[0]/description
+#: meta/registry.json/agent_types[4]/parameters[0]/description
+#: meta/registry.json/agent_types[5]/parameters[0]/description
+msgid "Human-readable agent name stored in the YSocial experiment population."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/parameter_sections[1]/label
+msgid "Humor Style"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/parameters[3]/label
+msgid "Humor Styles"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[10]/description
+msgid "Insert synthetic report bursts for the selected target's recent post."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/client_parameter_sections[0]/label
+msgid "Interaction Policy"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameter_sections[2]/label
+msgid "Internal Boosting"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[2]/parameters[3]/description
+msgid "Literal text published by the agent on each active round."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[13]/description
+msgid ""
+"Lookback window, in simulation rounds, used to count prior moderation infractions for permanent-"
+"ban escalation."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[9]/description
+msgid ""
+"Lookback window, in simulation rounds, used to count prior moderation infractions for shadow-ban "
+"escalation."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameter_sections[4]/label
+msgid "Mass Reporting Pressure"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/display_name
+msgid "Master of Puppets (MoP)"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameters[1]/label
+msgid "Max Concurrent Targets"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameters[4]/label
+msgid "Max Interaction Rounds"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/parameters[2]/description
+msgid "Maximum number of joke actions the agent can perform in one simulation day."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/parameters[2]/description
+msgid "Maximum number of persuasion actions the agent can perform in one simulation day."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameters[4]/description
+msgid ""
+"Maximum number of propaganda messages the agent may emit within one persuasion thread before "
+"stopping."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameters[2]/description
+msgid "Maximum number of puppet actions the MoP can dispatch in one simulation day."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/parameters[2]/description
+msgid "Maximum number of synthetic stress-event actions the agent can emit in one simulation day."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameters[1]/description
+msgid ""
+"Maximum number of target users this propaganda agent may handle at the same time across active "
+"persuasion threads."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[3]/description
+msgid ""
+"Minimum toxicity score in post_toxicity.toxicity that makes an unmoderated post eligible for "
+"moderation. Must be in [0, 1]."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/client_parameters[0]/label
+msgid "MoP Campaigns"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/client_parameter_sections[0]/label
+msgid "MoP Goals"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/prompt_templates[0]/title
+msgid "MoP Post Planner System Prompt"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[5]/label
+msgid "Moderation Action Type"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameter_sections[1]/label
+msgid "Moderation Policy"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[4]/label
+msgid "Moderation Time Span"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[5]/description
+msgid ""
+"Moderation strategy. 'one-fits-all' writes a standard notice, while 'personalized' requires a "
+"configured LangChain LLM model and generates a user-tailored notice."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/display_name
+msgid "Moderator Agent"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/parameters[0]/label
+#: meta/registry.json/agent_types[1]/parameters[0]/label
+#: meta/registry.json/agent_types[2]/parameters[0]/label
+#: meta/registry.json/agent_types[3]/parameters[0]/label
+#: meta/registry.json/agent_types[4]/parameters[0]/label
+#: meta/registry.json/agent_types[5]/parameters[0]/label
+msgid "Name"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/parameters[1]/description
+#: meta/registry.json/agent_types[1]/parameters[1]/description
+#: meta/registry.json/agent_types[2]/parameters[1]/description
+#: meta/registry.json/agent_types[3]/parameters[1]/description
+#: meta/registry.json/agent_types[4]/parameters[1]/description
+#: meta/registry.json/agent_types[5]/parameters[1]/description
+msgid "Name of a simulation.activity_profiles entry from the client configuration."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameter_sections[2]/label
+msgid "Negative Reaction Bursts"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[5]/label
+msgid "Negative Reactions Enabled"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameters[6]/label
+msgid "Network Budget Percentage"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameters[3]/description
+msgid "Number of active puppet accounts the MoP should keep alive at all times."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[1]/description
+msgid "Number of consecutive rounds to keep pressure on the same target before cooling down."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[14]/description
+msgid ""
+"Number of infractions within the configured window that triggers a warning. The next infraction "
+"within the same window permanently bans the user."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[10]/description
+msgid "Number of moderation infractions within the configured window that triggers a shadow ban."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[2]/description
+msgid "Number of rounds to wait before choosing a new target."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[11]/description
+msgid ""
+"Number of simulation rounds for which the offending user remains shadow-banned once the threshold"
+" is reached."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[4]/description
+msgid "Number of simulation rounds for which the system moderation notice stays visible in sys_messages."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/client_parameters[2]/label
+#: meta/registry.json/agent_types[4]/client_parameters[3]/label
+msgid "Opening LLM Prompt Override"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameter_sections[2]/label
+msgid "Opening Propaganda Prompt"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/prompt_templates[0]/title
+msgid "Opening Propaganda System Prompt"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameter_sections[2]/description
+msgid "Optional escalation settings activated after repeated infractions."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameters[3]/description
+msgid "Optional full override for the opening propaganda system prompt."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameters[5]/description
+msgid "Optional full override for the reply propaganda system prompt."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/client_parameters[3]/description
+msgid "Optional full override for the system prompt used when generating a reply comment."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/client_parameters[2]/description
+msgid "Optional full override for the system prompt used when generating a standalone tagged joke post."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[7]/description
+msgid ""
+"Optional lookback window, in simulation rounds, used to search for recent unmoderated posts. "
+"Defaults to 1."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameter_sections[3]/description
+msgid ""
+"Optional permanent-ban escalation applied after repeated infractions continue beyond the warning "
+"threshold."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[12]/description
+msgid ""
+"Optional secondary moderation action. When enabled, users are permanently banned after exceeding "
+"the configured infraction threshold within the configured window."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[8]/description
+msgid ""
+"Optional secondary moderation action. When enabled, users exceeding the configured infraction "
+"threshold within the configured window are temporarily shadow-banned."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/client_parameter_sections[1]/description
+msgid "Override the built-in LLM prompts used for standalone joke posts and reply comments."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameter_sections[3]/description
+msgid "Override the system prompt used for follow-up replies inside an ongoing persuasion thread."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameter_sections[2]/description
+msgid "Override the system prompt used for the first directed propaganda post in a new thread."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameters[6]/description
+msgid "Percentage of the total MoP daily budget reserved for follow-based network expansion."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameters[4]/description
+msgid "Percentage of the total MoP daily budget reserved for puppet-authored topic-pushing posts."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameters[5]/description
+msgid ""
+"Percentage of the total MoP daily budget reserved for sibling boosting actions such as likes and "
+"reshares."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameter_sections[3]/label
+msgid "Permanent Ban"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/prompt_templates[0]/title
+msgid "Personalized Moderation System Prompt"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameters[4]/label
+msgid "Post Budget Percentage"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[4]/label
+#: meta/registry.json/agent_types[1]/client_parameters[1]/label
+msgid "Post Lookback Rounds"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[2]/parameters[3]/label
+msgid "Post Text"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[2]/description
+msgid ""
+"Posts a configured literal text once on each simulation round where the agent's activity profile "
+"is active. Defaults to HELLO WORLD."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameter_sections[1]/description
+msgid "Primary moderation strategy and moderation window parameters."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/client_parameter_sections[1]/label
+msgid "Prompt Customization"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/display_name
+msgid "Propaganda Agent"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameters[0]/label
+msgid "Propaganda Campaigns"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameters[3]/label
+msgid "Puppet Count"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[6]/label
+msgid "Reaction Burst Volume"
+msgstr ""
+
+#. manifest string
+#: meta/info.json/description
+msgid ""
+"Ready-made special-purpose agents (moderator, propaganda, comic relief, stress testing and more) "
+"to add to an experiment."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/client_parameters[3]/label
+#: meta/registry.json/agent_types[4]/client_parameters[5]/label
+msgid "Reply LLM Prompt Override"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameter_sections[3]/label
+msgid "Reply Propaganda Prompt"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/prompt_templates[1]/title
+msgid "Reply Propaganda System Prompt"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[10]/label
+msgid "Report Burst Enabled"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[11]/label
+msgid "Report Burst Volume"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/description
+msgid ""
+"Safe synthetic stress-event injector used to benchmark mitigation and churn defenses by targeting"
+" one demographic segment at a time with configurable negative-pressure events and report bursts."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/description
+msgid ""
+"Scans recent unmoderated content during active slots, prioritizes reported or highly toxic posts,"
+" writes moderation notices into sys_messages, and marks moderated posts in the experiment "
+"database."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[1]/parameters[3]/description
+msgid "Select one or more comic styles this agent can combine when generating humor."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameter_sections[2]/label
+msgid "Shadow Ban"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[11]/label
+msgid "Shadow Ban Duration Rounds"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[8]/label
+msgid "Shadow Ban Enabled"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[9]/label
+msgid "Shadow Ban Infraction Window Rounds"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[10]/label
+msgid "Shadow Ban N Infraction"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[3]/label
+msgid "Source Count"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[6]/label
+msgid "Standard Message"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameters[2]/description
+msgid ""
+"Stop the persuasion thread once the target user's latest opinion is within this tolerance of the "
+"configured target value."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/client_parameter_sections[1]/description
+msgid "Stopping conditions and adaptation sensitivity for persuasion threads."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/display_name
+msgid "Stress Attacker"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameter_sections[1]/label
+msgid "Stress Campaign"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[5]/parameters[5]/label
+msgid "Support Budget Percentage"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[9]/description
+msgid ""
+"Synthetic comment body used when Critical Comment Mode is synthetic. The target tag is added "
+"automatically at the beginning of the reply."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameter_sections[3]/description
+msgid "Synthetic critical-comment events that increase stress without generating abusive text."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameter_sections[2]/description
+msgid "Synthetic dislike bursts applied to a recent post from the selected target."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[6]/description
+msgid "Synthetic dislike volume used when negative reactions are enabled."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[3]/description
+msgid "Synthetic number of coordinated sources represented in each burst."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[11]/description
+msgid "Synthetic number of reports generated during each report burst."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameter_sections[4]/description
+msgid "Synthetic report bursts inserted against the selected target's recent post."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameters[0]/label
+msgid "Target Filters"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[0]/client_parameter_sections[0]/label
+msgid "Target Selection"
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[4]/description
+msgid ""
+"Targets regular agents on configured opinion-dynamics topics, opens tagged persuasion threads, "
+"and adapts its nudging strategy based on observed opinion shifts over time."
+msgstr ""
+
+#. manifest string
+#: meta/registry.json/agent_types[3]/parameters[3]/label
+msgid "Toxicity Threshold"
+msgstr ""
+

@@ -8,6 +8,7 @@ from sqlalchemy import Column, Integer, MetaData, REAL, String, Table
 
 from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec, PostRecord, UserRecord
 from y_agents_plugins.plugins.base import BaseAgentPlugin
+from y_agents_plugins import prompt_store
 
 
 class PropagandaAgent(BaseAgentPlugin):
@@ -15,9 +16,7 @@ class PropagandaAgent(BaseAgentPlugin):
 
     agent_type = "propaganda"
     _SAFETY_DIRECTIVE = (
-        "Keep the message respectful, non-toxic, non-threatening, and non-inflammatory. "
-        "Do not insult, shame, harass, demean, or use manipulative abuse. "
-        "Use calm, evidence-based language that minimizes backlash and the risk of moderation."
+        prompt_store.get("propaganda__module__1")
     )
 
     @staticmethod
@@ -369,9 +368,10 @@ class PropagandaAgent(BaseAgentPlugin):
             )
             , target_user.username)
         system_prompt = (
-            "You are a subtle propaganda operative. Write a short social-media post that tags the target user, "
-            "sounds conversational, and nudges them toward the requested stance without sounding like an overt ad. "
-            f"{self._SAFETY_DIRECTIVE}"
+            prompt_store.prompt(
+                "propaganda__build_initial_message__1",
+                _SAFETY_DIRECTIVE=self._SAFETY_DIRECTIVE,
+            )
         )
         resolved_settings = self._resolved_settings(agent)
         override_prompt = str(
@@ -382,15 +382,16 @@ class PropagandaAgent(BaseAgentPlugin):
         if override_prompt:
             system_prompt = override_prompt
         user_prompt = (
-            f"Propaganda agent profile: {agent.parameters or {}}\n"
-            f"Target user profile: {target_user.profile}\n"
-            f"Topic: {topic_name}\n"
-            f"Target user's current opinion on this topic: {current_opinion:.3f}\n"
-            f"Desired target opinion: {target_value:.3f}\n"
-            f"Desired target-user opinion group: {campaign.get('target_agent_opinion_group', 'any')}\n"
-            f"Write one concise tagged post to @{target_user.username}. "
-            "Avoid toxicity, insults, threats, ridicule, or hostile framing. "
-            "Return only the post text."
+            prompt_store.prompt(
+                "propaganda__build_initial_message__2",
+                v1=agent.parameters or {},
+                profile=target_user.profile,
+                topic_name=topic_name,
+                v4=format(current_opinion, '.3f'),
+                v5=format(target_value, '.3f'),
+                v6=campaign.get('target_agent_opinion_group', 'any'),
+                username=target_user.username,
+            )
         )
         return self._normalize_target_tag(
             self.llm.invoke_text(system_prompt=system_prompt, user_prompt=user_prompt),
@@ -421,9 +422,10 @@ class PropagandaAgent(BaseAgentPlugin):
             )
             , target_user.username)
         system_prompt = (
-            "You are a subtle persuasion agent in an ongoing public thread. "
-            "Reply briefly, stay on topic, personalize the tone, and keep nudging the user toward the target stance. "
-            f"{self._SAFETY_DIRECTIVE}"
+            prompt_store.prompt(
+                "propaganda__build_reply_message__1",
+                _SAFETY_DIRECTIVE=self._SAFETY_DIRECTIVE,
+            )
         )
         resolved_settings = self._resolved_settings(agent)
         override_prompt = str(
@@ -434,16 +436,16 @@ class PropagandaAgent(BaseAgentPlugin):
         if override_prompt:
             system_prompt = override_prompt
         user_prompt = (
-            f"Target user profile: {target_user.profile}\n"
-            f"Topic: {topic_name}\n"
-            f"Desired target opinion: {target_value:.3f}\n"
-            f"Latest observed target opinion: {current_opinion if current_opinion is not None else 'unknown'}\n"
-            f"Observed opinion shift after the last target reply: {observed_change if observed_change is not None else 'unknown'}\n"
-            f"Latest target reply: {latest_target_reply.text}\n"
-            f"Recent thread transcript:\n{transcript}\n"
-            "Write one concise reply that adapts to the observed change. "
-            "Avoid toxicity, insults, threats, ridicule, or hostile framing. "
-            "Return only the reply text."
+            prompt_store.prompt(
+                "propaganda__build_reply_message__2",
+                profile=target_user.profile,
+                topic_name=topic_name,
+                v3=format(target_value, '.3f'),
+                v4=current_opinion if current_opinion is not None else 'unknown',
+                v5=observed_change if observed_change is not None else 'unknown',
+                text=latest_target_reply.text,
+                transcript=transcript,
+            )
         )
         return self._normalize_target_tag(
             self.llm.invoke_text(system_prompt=system_prompt, user_prompt=user_prompt),

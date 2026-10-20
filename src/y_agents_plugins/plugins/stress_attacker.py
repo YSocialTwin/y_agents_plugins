@@ -7,6 +7,7 @@ from sqlalchemy import Column, Integer, MetaData, String, Table, select
 
 from y_agents_plugins.core import AgentAction, AgentContext, AgentSpec, PostRecord, UserRecord
 from y_agents_plugins.plugins.base import BaseAgentPlugin
+from y_agents_plugins import prompt_store
 
 
 class StressAttackerAgent(BaseAgentPlugin):
@@ -503,8 +504,10 @@ class StressAttackerAgent(BaseAgentPlugin):
         if self.llm is None or not getattr(self.llm, "is_available", False):
             return self._normalize_target_tag(
                 (
-                    f"@{target_user.username} Stop writing useless and stupid things. "
-                    "You're only embarrassing yourself!"
+                    prompt_store.prompt(
+                        "stress_attacker__build_critical_comment__3",
+                        username=target_user.username,
+                    )
                 ),
                 target_user.username,
             )
@@ -522,11 +525,10 @@ class StressAttackerAgent(BaseAgentPlugin):
             username = author.username if author is not None else str(post.author_id)
             thread_lines.append(f"@{username}: {post.text}")
         system_prompt = (
-            "You are writing one concise public reply to a target user's post. "
-            "The reply should be critical and skeptical, personal and with a highly confrontative tone. "
-            f"{self._SAFETY_DIRECTIVE} "
-            "Stay tightly focused on the target post and its topic. "
-            "Do not invent background facts unrelated to the visible thread."
+            prompt_store.prompt(
+                "stress_attacker__build_critical_comment__1",
+                _SAFETY_DIRECTIVE=self._SAFETY_DIRECTIVE,
+            )
         )
         override_prompt = str(self._resolved_settings(agent).get("llm_prompt_override") or "").strip()
         if override_prompt:
@@ -536,11 +538,10 @@ class StressAttackerAgent(BaseAgentPlugin):
             f"Target user profile: {target_user.profile}\n"
             f"Topic labels: {', '.join(topic_names) if topic_names else 'unknown'}\n"
             f"Target post: {target_post.text}\n"
-            f"Visible thread context:\n" + ("\n".join(thread_lines) if thread_lines else "(no additional context)") + "\n"
-            f"Write one short reply that starts with '@{target_user.username} '. "
-            "Question the argument, point out inconsistency, or ask for evidence while staying on the same topic as the target post. "
-            "Be personal, highly confrontative and critical in your language. "
-            "Return only the reply text."
+            f"Visible thread context:\n" + ("\n".join(thread_lines) if thread_lines else "(no additional context)") + prompt_store.prompt(
+                                                                                                                          "stress_attacker__build_critical_comment__2",
+                                                                                                                          username=target_user.username,
+                                                                                                                      )
         )
         text = self.llm.invoke_text(system_prompt=system_prompt, user_prompt=user_prompt).strip()
         cleaned = self._normalize_target_tag(text, target_user.username)
