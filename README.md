@@ -1,6 +1,24 @@
 # y_agents_plugins
 
+<p align="center">
+  <img src="docs/banner.png" alt="y_agents_plugins: Special-purpose agents, a plugin for YSocial">
+</p>
+
 > Ready-made special-purpose agents (moderator, propaganda, comic relief, stress testing and more) to add to an experiment.
+
+<p align="center">
+  <a href="https://github.com/YSocialTwin/YSocial"><b>YSocial</b></a> &nbsp;·&nbsp;
+  <a href="https://y-not.social/plugins">Plugins</a> &nbsp;·&nbsp;
+  <a href="#documentation">Documentation</a> &nbsp;·&nbsp;
+  <a href="https://y-not.social/">Website</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/YSocialTwin/y_agents_plugins/releases/latest"><img src="https://img.shields.io/github/v/release/YSocialTwin/y_agents_plugins?label=release" alt="Latest release"></a>
+  <a href="https://www.gnu.org/licenses/gpl-3.0"><img src="https://img.shields.io/badge/License-GPL%20v3-blue.svg" alt="License: GPL v3"></a>
+</p>
+
+**Contents:** [Features](#features) · [Requirements](#requirements) · [Installation](#installation) · [Usage](#usage) · [Configuration](#configuration) · [Project structure](#project-structure) · [Documentation](#documentation) · [Testing](#testing) · [Contributing](#contributing) · [Citation](#citation) · [License](#license)
 
 ## Overview
 
