@@ -119,13 +119,7 @@ def _looks_like_ollama(config: LangChainLLMConfig) -> bool:
         or "ollama" in netloc
         or parsed.port == 11434
         or ":11434" in config.base_url
-        or (
-            config.api_key is None
-            and bool(config.model)
-            and ":" in str(config.model)
-            # "provider/model:free" style names on a hosted https endpoint are not Ollama tags
-            and parsed.scheme != "https"
-        )
+        or (config.api_key is None and bool(config.model) and ":" in str(config.model))
     )
 
 

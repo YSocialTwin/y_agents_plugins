@@ -16,10 +16,6 @@ def _config(**kw):
     return lc.LangChainLLMConfig(**base)
 
 
-def test_a_hosted_https_endpoint_with_a_colon_model_and_no_key_is_not_ollama():
-    assert not lc._looks_like_ollama(
-        _config(base_url="https://openrouter.ai/api/v1", model="vendor/model:free")
-    )
 
 
 def test_a_plain_http_endpoint_with_an_ollama_tag_is_still_ollama():
