@@ -75,6 +75,11 @@ class LangChainTextGenerator:
                 kwargs["temperature"] = self.config.temperature
             if self.config.max_tokens is not None:
                 kwargs["num_predict"] = self.config.max_tokens
+            if self.config.api_key:
+                # authenticated Ollama endpoints (e.g. hosted ones) expect the key as a bearer token
+                kwargs["client_kwargs"] = {
+                    "headers": {"Authorization": f"Bearer {self.config.api_key}"}
+                }
             return ChatOllama(**kwargs)
 
         try:
@@ -114,7 +119,13 @@ def _looks_like_ollama(config: LangChainLLMConfig) -> bool:
         or "ollama" in netloc
         or parsed.port == 11434
         or ":11434" in config.base_url
-        or (config.api_key is None and bool(config.model) and ":" in str(config.model))
+        or (
+            config.api_key is None
+            and bool(config.model)
+            and ":" in str(config.model)
+            # "provider/model:free" style names on a hosted https endpoint are not Ollama tags
+            and parsed.scheme != "https"
+        )
     )
 
 
